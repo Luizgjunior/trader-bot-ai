@@ -65,7 +65,7 @@ waitForPython(20, () => {
   const bot = spawn('npx', ['ts-node', 'src/core/loop.ts'], {
     cwd: ROOT,
     stdio: 'inherit',
-    shell: false,
+    shell: true,
   });
   fs.writeFileSync(BOT_PID_FILE, String(bot.pid));
   console.log(`[Launcher] Bot started (PID ${bot.pid})`);

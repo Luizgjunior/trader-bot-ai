@@ -9,7 +9,6 @@ import { checkRisk } from '../risk/sizer';
 import { checkTrailingStop } from '../risk/trailingStop';
 import { executeDecision } from '../broker/orderManager';
 import { sendTelegram, formatAnalise, formatEntrada, formatFechamento } from '../notifications/telegram';
-import { getBalance } from '../broker/bybit';
 
 const PAIR = process.env.TRADING_PAIR ?? 'BTCUSDT';
 const TESTNET = process.env.BYBIT_TESTNET === 'true';
@@ -50,9 +49,6 @@ async function checkPaperClosures(currentPrice: number): Promise<void> {
 
     closePaperTrade(trade.id, pnl);
 
-    const durationMs = Date.now() - new Date(trade.created_at).getTime();
-    const durMin = Math.round(durationMs / 60_000);
-    const durStr = durMin < 60 ? `${durMin}min` : `${Math.floor(durMin / 60)}h${durMin % 60 > 0 ? (durMin % 60) + 'min' : ''}`;
     const icone = hitTP ? '✅ TP' : '🛑 SL';
     await sendTelegram(formatFechamento(trade, exitPrice, pnl, hitTP, PAIR, TESTNET));
     console.log(`[Paper] Trade #${trade.id} fechado — ${icone} | PnL: ${pnl.toFixed(4)}`);

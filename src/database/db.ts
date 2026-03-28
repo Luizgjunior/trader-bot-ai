@@ -20,9 +20,6 @@ export function initDb(): void {
   db.exec('PRAGMA journal_mode=WAL;');
   db.exec('PRAGMA busy_timeout=3000;');
 
-  // Adiciona entry_price se ainda não existir (migração segura)
-  try { db.exec('ALTER TABLE trades ADD COLUMN entry_price REAL'); } catch {}
-
   db.exec(`
     CREATE TABLE IF NOT EXISTS candles (
       timestamp INTEGER PRIMARY KEY,
@@ -49,9 +46,13 @@ export function initDb(): void {
       reasoning TEXT,
       paper INTEGER NOT NULL DEFAULT 1,
       order_id TEXT,
-      pnl REAL
+      pnl REAL,
+      entry_price REAL
     );
   `);
+
+  // Migration: adiciona entry_price em DBs antigos que não tinham a coluna
+  try { db.exec('ALTER TABLE trades ADD COLUMN entry_price REAL'); } catch {}
 
   console.log(`[DB] Initialized at ${DB_PATH}`);
 }
