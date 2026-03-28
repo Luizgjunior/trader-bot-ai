@@ -10,7 +10,7 @@ function calcEquity(closedTrades: Array<{ pnl: number }>): Array<{ index: number
 }
 
 export async function GET() {
-  const [status, analyses, openTradesHash, closedRaw, balanceRaw] = await Promise.all([
+  const [statusRaw, analyses, openTradesHash, closedRaw, balanceRaw] = await Promise.all([
     redis.get('bot:status'),
     redis.lrange('bot:analyses', 0, 9),
     redis.hgetall('bot:open_trades'),
@@ -18,8 +18,10 @@ export async function GET() {
     redis.get('bot:balance'),
   ]);
 
+  const status = statusRaw ? JSON.parse(statusRaw) : null;
+
   const openTrades = openTradesHash
-    ? Object.values(openTradesHash).map(v => JSON.parse(v as string))
+    ? Object.values(openTradesHash).map(v => JSON.parse(v))
     : [];
 
   const closedTrades = (closedRaw as string[]).map(v => JSON.parse(v)).reverse();
@@ -33,7 +35,7 @@ export async function GET() {
     analyses: parsedAnalyses,
     openTrades,
     closedTrades,
-    balance: balanceRaw ? JSON.parse(balanceRaw as string) : null,
+    balance: balanceRaw ? JSON.parse(balanceRaw) : null,
     equity,
   });
 }

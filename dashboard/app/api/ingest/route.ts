@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
 
   switch (type) {
     case 'heartbeat':
-      await redis.set('bot:status', { online: true, ...event, ts: Date.now() }, { ex: 600 });
+      await redis.set('bot:status', JSON.stringify({ online: true, ...event, ts: Date.now() }), 'EX', 600);
       break;
 
     case 'analysis':
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
       break;
 
     case 'trade_open':
-      await redis.hset('bot:open_trades', { [event.tradeId]: JSON.stringify(event) });
+      await redis.hset('bot:open_trades', event.tradeId, JSON.stringify(event));
       break;
 
     case 'trade_close':
