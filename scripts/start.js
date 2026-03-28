@@ -28,6 +28,7 @@ const py = spawn('python', [pyApp], {
   cwd: path.join(__dirname, '..'),
   stdio: ['ignore', 'pipe', 'pipe'],
   shell: false,
+  windowsHide: true,
 });
 fs.writeFileSync(PY_PID_FILE, String(py.pid));
 py.stdout.on('data', (d) => process.stdout.write(`[Python] ${d}`));
@@ -58,6 +59,7 @@ waitForPython(20, () => {
     cwd: path.join(__dirname, '..'),
     stdio: 'inherit',
     shell: true,
+    windowsHide: true,
   });
   fs.writeFileSync(PID_FILE, String(bot.pid));
   console.log(`[Launcher] Bot started (PID ${bot.pid})`);
@@ -74,6 +76,7 @@ waitForPython(20, () => {
     cwd: path.join(__dirname, '..', 'dashboard'),
     stdio: 'inherit',
     shell: true,
+    windowsHide: true,
   });
   console.log('[Launcher] Dashboard iniciado em http://localhost:3001');
 
