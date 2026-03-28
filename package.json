@@ -7,7 +7,8 @@
     "start": "node scripts/start.js",
     "backtest": "ts-node backtest/run.ts",
     "dev": "ts-node --watch src/core/loop.ts",
-    "report": "ts-node scripts/report.ts"
+    "report": "ts-node scripts/report.ts",
+    "test:cycle": "ts-node test-cycle.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
