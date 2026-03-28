@@ -4,32 +4,19 @@ import { useEffect, useState, useCallback } from 'react';
 import StatusCard from '../components/StatusCard';
 import EquityChart from '../components/EquityChart';
 import { OpenTradeTable, ClosedTradeTable } from '../components/TradeTable';
-import AnalysisFeed from '../components/AnalysisFeed';
 
 interface DashboardData {
-  status: {
-    online: boolean;
-    pair: string;
-    mode: string;
-    balance: number;
-    ts: number;
-  } | null;
-  analyses: Array<{
-    action: string;
-    confidence: number;
-    reasoning: string;
-    context: { m15_trend: string; h1_trend: string; h4_trend: string; adx: number; price: number };
-    timestamp: string;
-  }>;
+  status: { online: boolean; pair: string; mode: string } | null;
   openTrades: Array<{
-    tradeId: string; action: string; entry: number;
-    stopLoss: number; takeProfit: number; timestamp: string;
+    id: number; created_at: string; action: string; size: number;
+    entry_price: number; stop_loss: number; take_profit: number;
+    confidence: number; paper: number;
   }>;
   closedTrades: Array<{
-    tradeId: string; action: string; entry: number; exit: number;
-    pnl: number; isTP: boolean; duration: string; timestamp: string;
+    id: number; created_at: string; action: string; size: number;
+    entry_price: number; stop_loss: number; take_profit: number;
+    confidence: number; pnl: number; paper: number;
   }>;
-  balance: { usdt: number; timestamp: string } | null;
   equity: Array<{ index: number; equity: number }>;
 }
 
@@ -98,7 +85,6 @@ export default function DashboardPage() {
   const secAgo = lastUpdate ? Math.round((now - lastUpdate) / 1000) : null;
   const online = data?.status?.online ?? false;
   const metrics = calcMetrics(data?.closedTrades ?? []);
-  const balance = data?.balance?.usdt ?? data?.status?.balance ?? 0;
   const pair = data?.status?.pair ?? 'BTCUSDT';
   const mode = data?.status?.mode ?? '—';
 
@@ -133,7 +119,6 @@ export default function DashboardPage() {
 
       {/* ── Metric cards ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 20 }}>
-        <StatusCard label="Saldo USDT" value={`$${balance.toFixed(2)}`} color="#00ff88" mono />
         <StatusCard label="Total Trades" value={(data?.closedTrades.length ?? 0) + (data?.openTrades.length ?? 0)} />
         <StatusCard
           label="Win Rate"
@@ -167,15 +152,9 @@ export default function DashboardPage() {
       </div>
 
       {/* ── Closed trades ── */}
-      <div style={{ ...section, marginBottom: 20 }}>
-        <div style={sectionTitle}>Últimos 20 Trades Fechados</div>
-        <ClosedTradeTable trades={data?.closedTrades ?? []} />
-      </div>
-
-      {/* ── Analysis feed ── */}
       <div style={section}>
-        <div style={sectionTitle}>Últimas Análises do Claude</div>
-        <AnalysisFeed analyses={data?.analyses ?? []} />
+        <div style={sectionTitle}>Últimos Trades Fechados ({data?.closedTrades.length ?? 0})</div>
+        <ClosedTradeTable trades={data?.closedTrades ?? []} />
       </div>
 
     </div>

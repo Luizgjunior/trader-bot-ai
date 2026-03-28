@@ -62,6 +62,14 @@ waitForPython(20, () => {
   fs.writeFileSync(PID_FILE, String(bot.pid));
   console.log(`[Launcher] Bot started (PID ${bot.pid})`);
 
+  // Start the dashboard
+  const dashboard = spawn('npm', ['run', 'dev'], {
+    cwd: path.join(__dirname, '..', 'dashboard'),
+    stdio: 'inherit',
+    shell: true,
+  });
+  console.log('[Launcher] Dashboard iniciado em http://localhost:3001');
+
   bot.on('exit', (code) => {
     if (fs.existsSync(PID_FILE)) fs.unlinkSync(PID_FILE);
     // Also kill python
