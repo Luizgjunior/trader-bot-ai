@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { redis } from '../../../lib/redis';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(req: NextRequest) {
@@ -13,26 +13,26 @@ export async function POST(req: NextRequest) {
 
   switch (type) {
     case 'heartbeat':
-      await kv.set('bot:status', { online: true, ...event, ts: Date.now() }, { ex: 600 });
+      await redis.set('bot:status', { online: true, ...event, ts: Date.now() }, { ex: 600 });
       break;
 
     case 'analysis':
-      await kv.lpush('bot:analyses', JSON.stringify(event));
-      await kv.ltrim('bot:analyses', 0, 49);
+      await redis.lpush('bot:analyses', JSON.stringify(event));
+      await redis.ltrim('bot:analyses', 0, 49);
       break;
 
     case 'trade_open':
-      await kv.hset('bot:open_trades', { [event.tradeId]: JSON.stringify(event) });
+      await redis.hset('bot:open_trades', { [event.tradeId]: JSON.stringify(event) });
       break;
 
     case 'trade_close':
-      await kv.hdel('bot:open_trades', event.tradeId);
-      await kv.lpush('bot:closed_trades', JSON.stringify(event));
-      await kv.ltrim('bot:closed_trades', 0, 199);
+      await redis.hdel('bot:open_trades', event.tradeId);
+      await redis.lpush('bot:closed_trades', JSON.stringify(event));
+      await redis.ltrim('bot:closed_trades', 0, 199);
       break;
 
     case 'balance':
-      await kv.set('bot:balance', JSON.stringify(event));
+      await redis.set('bot:balance', JSON.stringify(event));
       break;
 
     default:

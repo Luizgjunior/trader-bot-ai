@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { redis } from '../../../lib/redis';
 import { NextResponse } from 'next/server';
 
 function calcEquity(closedTrades: Array<{ pnl: number }>): Array<{ index: number; equity: number }> {
@@ -11,11 +11,11 @@ function calcEquity(closedTrades: Array<{ pnl: number }>): Array<{ index: number
 
 export async function GET() {
   const [status, analyses, openTradesHash, closedRaw, balanceRaw] = await Promise.all([
-    kv.get('bot:status'),
-    kv.lrange('bot:analyses', 0, 9),
-    kv.hgetall('bot:open_trades'),
-    kv.lrange('bot:closed_trades', 0, 199),
-    kv.get('bot:balance'),
+    redis.get('bot:status'),
+    redis.lrange('bot:analyses', 0, 9),
+    redis.hgetall('bot:open_trades'),
+    redis.lrange('bot:closed_trades', 0, 199),
+    redis.get('bot:balance'),
   ]);
 
   const openTrades = openTradesHash
