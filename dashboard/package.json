@@ -1,0 +1,22 @@
+{
+  "name": "tradebot-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "14",
+    "react": "^18",
+    "react-dom": "^18",
+    "recharts": "^2",
+    "@vercel/kv": "^1"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "@types/react": "^18",
+    "@types/node": "^20"
+  }
+}

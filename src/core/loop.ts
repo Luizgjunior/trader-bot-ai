@@ -9,6 +9,8 @@ import { checkRisk } from '../risk/sizer';
 import { checkTrailingStop } from '../risk/trailingStop';
 import { executeDecision } from '../broker/orderManager';
 import { sendTelegram, formatAnalise, formatEntrada, formatFechamento } from '../notifications/telegram';
+import { reportToVercel } from '../reporter/vercel';
+import { getBalance } from '../broker/bybit';
 
 const PAIR = process.env.TRADING_PAIR ?? 'BTCUSDT';
 const TESTNET = process.env.BYBIT_TESTNET === 'true';
@@ -29,6 +31,7 @@ let isProcessing = false;
 let consecutiveHolds = 0;
 let candleCount = 0;
 let skipUntilCandle = 0;
+const HEARTBEAT_INTERVAL = 5; // a cada 5 candles M15 (~1h15min)
 // ───────────────────────────────────────────────────────────────────────────
 
 
@@ -49,6 +52,21 @@ async function checkPaperClosures(currentPrice: number): Promise<void> {
 
     closePaperTrade(trade.id, pnl);
 
+    const durationMs = Date.now() - new Date(trade.created_at).getTime();
+    const durMin = Math.round(durationMs / 60_000);
+    const durStr = durMin < 60 ? `${durMin}min` : `${Math.floor(durMin / 60)}h${durMin % 60 > 0 ? (durMin % 60) + 'min' : ''}`;
+    reportToVercel({
+      type: 'trade_close',
+      tradeId: String(trade.id),
+      action: trade.action,
+      entry: trade.entry_price ?? exitPrice,
+      exit: exitPrice,
+      pnl,
+      isTP: hitTP,
+      duration: durStr,
+      timestamp: new Date().toISOString(),
+    });
+
     const icone = hitTP ? '✅ TP' : '🛑 SL';
     await sendTelegram(formatFechamento(trade, exitPrice, pnl, hitTP, PAIR, TESTNET));
     console.log(`[Paper] Trade #${trade.id} fechado — ${icone} | PnL: ${pnl.toFixed(4)}`);
@@ -63,6 +81,19 @@ async function onCandleClose(): Promise<void> {
   }
 
   candleCount++;
+
+  // ── Heartbeat para o dashboard ─────────────────────────────────────────
+  if (candleCount % HEARTBEAT_INTERVAL === 0) {
+    getBalance().then(bal => {
+      reportToVercel({
+        type: 'heartbeat',
+        balance: bal,
+        pair: PAIR,
+        mode: TESTNET ? 'paper' : 'live',
+        timestamp: new Date().toISOString(),
+      });
+    }).catch(() => {});
+  }
 
   // ── Circuit breaker: pausa após N HOLDs consecutivos ──────────────────
   if (candleCount < skipUntilCandle) {
@@ -133,6 +164,22 @@ async function onCandleClose(): Promise<void> {
 
     console.log(`[Loop] Decisão Claude: ${decision.action} (confiança: ${decision.confidence})`);
     await sendTelegram(formatAnalise(decision, context, PAIR));
+    reportToVercel({
+      type: 'analysis',
+      action: decision.action,
+      confidence: decision.confidence,
+      reasoning: decision.reasoning,
+      context: {
+        timeframe_alignment: context.timeframe_alignment,
+        adx: context.h4.adx,
+        volume: context.m15.volume_vs_avg,
+        m15_trend: context.m15.ema_trend,
+        h1_trend: context.h1.ema_trend,
+        h4_trend: context.h4.ema_trend,
+        price: context.currentPrice,
+      },
+      timestamp: new Date().toISOString(),
+    });
 
     if (decision.action === 'HOLD') {
       consecutiveHolds++;
@@ -153,6 +200,17 @@ async function onCandleClose(): Promise<void> {
     if (result.executed) {
       setSetting('last_activity_ts', String(Date.now()));
       await sendTelegram(formatEntrada(decision, context, result, PAIR, TESTNET));
+      reportToVercel({
+        type: 'trade_open',
+        tradeId: result.orderId ?? String(Date.now()),
+        action: decision.action,
+        entry: context.currentPrice,
+        stopLoss: result.stopLoss ?? 0,
+        takeProfit: result.takeProfit ?? 0,
+        size: result.size ?? 0,
+        confidence: decision.confidence,
+        timestamp: new Date().toISOString(),
+      });
     }
   } catch (err) {
     console.error('[Loop] Erro no ciclo:', err);
@@ -241,6 +299,10 @@ async function main(): Promise<void> {
   } else {
     console.log('[Loop] Notificação de início suprimida (enviada há menos de 5min)');
   }
+
+  getBalance().then(bal => {
+    reportToVercel({ type: 'balance', usdt: bal, timestamp: new Date().toISOString() });
+  }).catch(() => {});
 
   connectWebSocket(PAIR, TESTNET, onCandleClose);
 }
