@@ -1,5 +1,6 @@
 import type { ClaudeDecision } from '../ai/parser';
 import { getDailyPnl } from '../database/db';
+import { getBalance } from '../broker/bybit';
 
 const MIN_CONFIDENCE = 0.70;
 
@@ -8,7 +9,7 @@ export interface RiskCheckResult {
   reason?: string;
 }
 
-export function checkRisk(decision: ClaudeDecision): RiskCheckResult {
+export async function checkRisk(decision: ClaudeDecision): Promise<RiskCheckResult> {
   if (decision.action === 'HOLD') {
     return { allowed: false, reason: 'HOLD signal' };
   }
@@ -21,12 +22,14 @@ export function checkRisk(decision: ClaudeDecision): RiskCheckResult {
   }
 
   const dailyLossLimit = parseFloat(process.env.DAILY_LOSS_LIMIT ?? '0.02');
-  const dailyPnl = getDailyPnl();
+  const dailyPnl = getDailyPnl(); // USDT absoluto
+  const balance = await getBalance(); // USDT disponível
+  const effectiveBalance = balance > 0 ? balance : 10000; // fallback paper trading
 
-  if (dailyPnl < -dailyLossLimit) {
+  if (dailyPnl / effectiveBalance < -dailyLossLimit) {
     return {
       allowed: false,
-      reason: `Daily loss limit reached (PnL: ${(dailyPnl * 100).toFixed(2)}%)`,
+      reason: `Daily loss limit reached (PnL: ${dailyPnl.toFixed(2)} USDT = ${((dailyPnl / effectiveBalance) * 100).toFixed(2)}%)`,
     };
   }
 

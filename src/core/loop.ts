@@ -145,7 +145,7 @@ async function onCandleClose(): Promise<void> {
       consecutiveHolds = 0;
     }
 
-    const riskCheck = checkRisk(decision);
+    const riskCheck = await checkRisk(decision);
 
     if (!riskCheck.allowed) {
       console.warn(`[Loop] Operação bloqueada pelo gerenciador de risco: ${riskCheck.reason}`);
