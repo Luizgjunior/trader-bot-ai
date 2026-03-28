@@ -1,0 +1,143 @@
+import { getCandles, getLastCandle } from '../core/candleStore';
+import { fetchIndicators, type Indicators } from '../indicators/client';
+import { getCurrentPosition, getBalance } from '../broker/bybit';
+import { getRecentTrades } from '../database/db';
+
+export interface TimeframeData {
+  ema_trend: 'bullish' | 'bearish' | 'neutral';
+  rsi: number;
+  rsi_zone: 'overbought' | 'oversold' | 'neutral';
+  macd_state: 'bullish' | 'bearish' | 'neutral';
+  adx: number;
+  adx_strength: 'strong_trend' | 'moderate_trend' | 'weak_trend' | 'no_trend';
+  bb_position: 'above_upper' | 'near_upper' | 'middle' | 'near_lower' | 'below_lower';
+  atr: number;
+  volume_vs_avg: 'high' | 'normal' | 'low';
+}
+
+export interface TradingContext {
+  pair: string;
+  currentPrice: number;
+  m15: TimeframeData;
+  h1: TimeframeData;
+  h4: TimeframeData;
+  timeframe_alignment: 'bullish' | 'bearish' | 'mixed';
+  position: object | null;
+  balance: number;
+  recentTrades: object[];
+  timestamp: string;
+  dayOfWeek: string;
+  hour: number;
+}
+
+function emaTrend(ind: Indicators): 'bullish' | 'bearish' | 'neutral' {
+  if (ind.ema20 > ind.ema50 && ind.ema50 > ind.ema200) return 'bullish';
+  if (ind.ema20 < ind.ema50 && ind.ema50 < ind.ema200) return 'bearish';
+  return 'neutral';
+}
+
+function rsiZone(rsi: number): 'overbought' | 'oversold' | 'neutral' {
+  if (rsi >= 70) return 'overbought';
+  if (rsi <= 30) return 'oversold';
+  return 'neutral';
+}
+
+function macdState(macdHist: number): 'bullish' | 'bearish' | 'neutral' {
+  if (macdHist > 0) return 'bullish';
+  if (macdHist < 0) return 'bearish';
+  return 'neutral';
+}
+
+function adxStrength(adx: number): 'strong_trend' | 'moderate_trend' | 'weak_trend' | 'no_trend' {
+  if (adx >= 40) return 'strong_trend';
+  if (adx >= 25) return 'moderate_trend';
+  if (adx >= 20) return 'weak_trend';
+  return 'no_trend';
+}
+
+function bbPosition(price: number, bbUpper: number, bbLower: number): 'above_upper' | 'near_upper' | 'middle' | 'near_lower' | 'below_lower' {
+  const range = bbUpper - bbLower;
+  if (range === 0) return 'middle';
+  const ratio = (price - bbLower) / range;
+  if (price > bbUpper) return 'above_upper';
+  if (ratio >= 0.8) return 'near_upper';
+  if (ratio <= 0.2) return 'near_lower';
+  if (price < bbLower) return 'below_lower';
+  return 'middle';
+}
+
+function volumeVsAvg(volume: number, volumeSma: number): 'high' | 'normal' | 'low' {
+  if (volumeSma === 0) return 'normal';
+  const ratio = volume / volumeSma;
+  if (ratio > 1.5) return 'high';
+  if (ratio < 0.7) return 'low';
+  return 'normal';
+}
+
+function buildTimeframeData(ind: Indicators, price: number): TimeframeData {
+  const lastVolume = ind.volumeSma; // approximation — actual last candle volume not available here
+  return {
+    ema_trend: emaTrend(ind),
+    rsi: Math.round(ind.rsi * 10) / 10,
+    rsi_zone: rsiZone(ind.rsi),
+    macd_state: macdState(ind.macdHist),
+    adx: Math.round(ind.adx * 10) / 10,
+    adx_strength: adxStrength(ind.adx),
+    bb_position: bbPosition(price, ind.bbUpper, ind.bbLower),
+    atr: Math.round(ind.atr * 100) / 100,
+    volume_vs_avg: volumeVsAvg(lastVolume, ind.volumeSma),
+  };
+}
+
+export async function buildContext(): Promise<TradingContext> {
+  const candles15 = getCandles(200, '15');
+  const candles60 = getCandles(200, '60');
+  const candles240 = getCandles(200, '240');
+
+  const [ind15, ind60, ind240, position, balance] = await Promise.all([
+    fetchIndicators(candles15),
+    fetchIndicators(candles60),
+    fetchIndicators(candles240),
+    getCurrentPosition(),
+    getBalance(),
+  ]);
+
+  const lastCandle = getLastCandle('15');
+  const currentPrice = lastCandle?.close ?? 0;
+
+  const tf15 = buildTimeframeData(ind15, currentPrice);
+  const tf60 = buildTimeframeData(ind60, currentPrice);
+  const tf240 = buildTimeframeData(ind240, currentPrice);
+
+  // Use actual last candle volume for M15 (most recent)
+  if (lastCandle && ind15.volumeSma > 0) {
+    tf15.volume_vs_avg = volumeVsAvg(lastCandle.volume, ind15.volumeSma);
+  }
+
+  let timeframe_alignment: 'bullish' | 'bearish' | 'mixed';
+  if (tf15.ema_trend === 'bullish' && tf60.ema_trend === 'bullish' && tf240.ema_trend === 'bullish') {
+    timeframe_alignment = 'bullish';
+  } else if (tf15.ema_trend === 'bearish' && tf60.ema_trend === 'bearish' && tf240.ema_trend === 'bearish') {
+    timeframe_alignment = 'bearish';
+  } else {
+    timeframe_alignment = 'mixed';
+  }
+
+  const recentTrades = getRecentTrades(5);
+  const now = new Date();
+
+  return {
+    pair: process.env.TRADING_PAIR ?? 'BTCUSDT',
+    currentPrice,
+    m15: tf15,
+    h1: tf60,
+    h4: tf240,
+    timeframe_alignment,
+    position,
+    balance,
+    recentTrades,
+    timestamp: now.toISOString(),
+    dayOfWeek: now.toLocaleDateString('en-US', { weekday: 'long' }),
+    hour: now.getUTCHours(),
+  };
+}

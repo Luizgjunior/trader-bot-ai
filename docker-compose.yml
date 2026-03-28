@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  python-indicators:
+    build:
+      context: ./python-indicators
+    ports:
+      - "5001:5001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  tradebot:
+    build:
+      context: .
+    depends_on:
+      python-indicators:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - INDICATORS_URL=http://python-indicators:5001
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

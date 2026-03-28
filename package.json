@@ -1,0 +1,27 @@
+{
+  "name": "tradebot-ai",
+  "version": "1.0.0",
+  "description": "AI-powered crypto trading bot using Claude + Bybit",
+  "main": "src/core/loop.ts",
+  "scripts": {
+    "start": "node scripts/start.js",
+    "backtest": "ts-node backtest/run.ts",
+    "dev": "ts-node --watch src/core/loop.ts",
+    "report": "ts-node scripts/report.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "axios": "^1.7.9",
+    "ccxt": "^4.4.34",
+    "dotenv": "^16.4.7",
+    "node-telegram-bot-api": "^0.66.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.10",
+    "@types/node-telegram-bot-api": "^0.64.7",
+    "@types/ws": "^8.18.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  }
+}
