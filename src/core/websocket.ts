@@ -7,6 +7,26 @@ const BYBIT_WS_MAINNET = 'wss://stream.bybit.com/v5/public/linear';
 let ws: WebSocket | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
 let onCandleClose: (() => void) | null = null;
+let heartbeatTimer: NodeJS.Timeout | null = null;
+let pongTimer: NodeJS.Timeout | null = null;
+
+function startHeartbeat(): void {
+  stopHeartbeat();
+  heartbeatTimer = setInterval(() => {
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.ping();
+      pongTimer = setTimeout(() => {
+        console.warn('[WS] Pong timeout — forçando reconexão...');
+        ws?.terminate();
+      }, 10_000);
+    }
+  }, 30_000);
+}
+
+function stopHeartbeat(): void {
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+  if (pongTimer)      { clearTimeout(pongTimer);       pongTimer = null; }
+}
 
 export function connectWebSocket(
   pair: string,
@@ -24,6 +44,11 @@ export function connectWebSocket(
   ws.on('open', () => {
     console.log('[WS] Connected');
     ws!.send(JSON.stringify({ op: 'subscribe', args: topics }));
+    startHeartbeat();
+  });
+
+  ws.on('pong', () => {
+    if (pongTimer) { clearTimeout(pongTimer); pongTimer = null; }
   });
 
   ws.on('message', (raw: Buffer) => {
@@ -31,6 +56,7 @@ export function connectWebSocket(
   });
 
   ws.on('close', () => {
+    stopHeartbeat();
     console.warn('[WS] Disconnected — reconnecting in 5s...');
     scheduleReconnect(pair, testnet, onClose);
   });

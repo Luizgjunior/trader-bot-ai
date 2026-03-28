@@ -189,6 +189,12 @@ async function main(): Promise<void> {
   console.log(`Par: ${PAIR} | Timeframes: M15, H1, H4 | Testnet: ${TESTNET}`);
 
   initDb();
+
+  const openAtStart = getOpenPaperTrades();
+  if (openAtStart.length > 0) {
+    console.log(`[Loop] Posição paper anterior detectada — monitorando SL/TP (${openAtStart.length} trade(s) aberto(s))`);
+  }
+
   await fetchAndLoadHistoricalCandles(PAIR, TESTNET);
 
   const FIVE_MINUTES = 5 * 60 * 1000;

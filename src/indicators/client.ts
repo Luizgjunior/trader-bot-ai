@@ -31,9 +31,12 @@ export async function fetchIndicators(candles: Candle[]): Promise<Indicators> {
     })),
   };
 
-  const { data } = await axios.post<Indicators>(`${INDICATORS_URL}/indicators`, payload, {
-    timeout: 5000,
-  });
-
-  return data;
+  try {
+    const { data } = await axios.post<Indicators>(`${INDICATORS_URL}/indicators`, payload, {
+      timeout: 5000,
+    });
+    return data;
+  } catch {
+    throw new Error('Python indicators server unreachable — is it running?');
+  }
 }
