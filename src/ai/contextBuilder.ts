@@ -12,7 +12,7 @@ export interface TimeframeData {
   adx_strength: 'strong_trend' | 'moderate_trend' | 'weak_trend' | 'no_trend';
   bb_position: 'above_upper' | 'near_upper' | 'middle' | 'near_lower' | 'below_lower';
   atr: number;
-  volume_vs_avg: 'high' | 'normal' | 'low';
+  volume_vs_avg?: 'high' | 'normal' | 'low';
 }
 
 export interface TradingContext {
@@ -75,7 +75,6 @@ function volumeVsAvg(volume: number, volumeSma: number): 'high' | 'normal' | 'lo
 }
 
 function buildTimeframeData(ind: Indicators, price: number): TimeframeData {
-  const lastVolume = ind.volumeSma; // approximation — actual last candle volume not available here
   return {
     ema_trend: emaTrend(ind),
     rsi: Math.round(ind.rsi * 10) / 10,
@@ -85,8 +84,16 @@ function buildTimeframeData(ind: Indicators, price: number): TimeframeData {
     adx_strength: adxStrength(ind.adx),
     bb_position: bbPosition(price, ind.bbUpper, ind.bbLower),
     atr: Math.round(ind.atr * 100) / 100,
-    volume_vs_avg: volumeVsAvg(lastVolume, ind.volumeSma),
   };
+}
+
+function assertIndicators(ind: Indicators, label: string): void {
+  const nullFields = Object.entries(ind)
+    .filter(([, v]) => v === null || v === undefined)
+    .map(([k]) => k);
+  if (nullFields.length > 0) {
+    throw new Error(`[Context] ${label} indicators com campos nulos: ${nullFields.join(', ')} — candles insuficientes`);
+  }
 }
 
 export async function buildContext(): Promise<TradingContext> {
@@ -101,6 +108,10 @@ export async function buildContext(): Promise<TradingContext> {
     getCurrentPosition(),
     getBalance(),
   ]);
+
+  assertIndicators(ind15, 'M15');
+  assertIndicators(ind60, 'H1');
+  assertIndicators(ind240, 'H4');
 
   const lastCandle = getLastCandle('15');
   const currentPrice = lastCandle?.close ?? 0;
