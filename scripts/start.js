@@ -1,43 +1,47 @@
-// Wrapper: kills previous instances (via PID file), starts Python indicators server + ts-node bot
-const { spawn, execSync } = require('child_process');
+// Launcher: starts Python indicators server + ts-node bot
+const { spawn } = require('child_process');
+const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const PID_FILE = path.join(__dirname, '..', 'data', 'bot.pid');
-const PY_PID_FILE = path.join(__dirname, '..', 'data', 'python.pid');
+const ROOT = path.join(__dirname, '..');
+const DATA_DIR = path.join(ROOT, 'data');
+const BOT_PID_FILE = path.join(DATA_DIR, 'bot.pid');
+const PY_PID_FILE = path.join(DATA_DIR, 'python.pid');
 
-// Ensure data dir exists
-const dataDir = path.join(__dirname, '..', 'data');
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-// Kill previous instances
-for (const [label, file] of [['bot', PID_FILE], ['python', PY_PID_FILE]]) {
+// Kill previous instances via saved PID files
+for (const [label, file] of [['bot', BOT_PID_FILE], ['python', PY_PID_FILE]]) {
   if (fs.existsSync(file)) {
-    const oldPid = fs.readFileSync(file, 'utf8').trim();
+    const oldPid = parseInt(fs.readFileSync(file, 'utf8').trim(), 10);
     try {
-      execSync(`taskkill /F /PID ${oldPid}`, { stdio: 'ignore' });
+      process.kill(oldPid, 'SIGTERM');
       console.log(`[Launcher] Killed previous ${label} (PID ${oldPid})`);
     } catch { /* already gone */ }
-    try { fs.unlinkSync(file); } catch { /* already deleted by exiting process */ }
+    try { fs.unlinkSync(file); } catch {}
   }
 }
 
 // Start Python indicators server
-const pyApp = path.join(__dirname, '..', 'python-indicators', 'app.py');
+const pyApp = path.join(ROOT, 'python-indicators', 'app.py');
 const py = spawn('python', [pyApp], {
-  cwd: path.join(__dirname, '..'),
+  cwd: ROOT,
   stdio: ['ignore', 'pipe', 'pipe'],
   shell: false,
-  windowsHide: true,
 });
 fs.writeFileSync(PY_PID_FILE, String(py.pid));
 py.stdout.on('data', (d) => process.stdout.write(`[Python] ${d}`));
 py.stderr.on('data', (d) => process.stderr.write(`[Python] ${d}`));
 console.log(`[Launcher] Python indicators server started (PID ${py.pid})`);
 
-// Wait for Python server to be ready, then start the bot
+py.on('exit', (code) => {
+  try { fs.unlinkSync(PY_PID_FILE); } catch {}
+  console.error(`[Launcher] Python server exited (code ${code})`);
+});
+
+// Wait for Python server to respond on port 5001
 function waitForPython(retries, cb) {
-  const http = require('http');
   const req = http.get('http://localhost:5001/health', (res) => {
     if (res.statusCode === 200) return cb();
     retry();
@@ -46,7 +50,11 @@ function waitForPython(retries, cb) {
   req.setTimeout(500, () => { req.destroy(); retry(); });
 
   function retry() {
-    if (retries <= 0) { console.error('[Launcher] Python server did not start in time'); process.exit(1); }
+    if (retries <= 0) {
+      console.error('[Launcher] Python server did not start in time. Aborting.');
+      cleanup();
+      process.exit(1);
+    }
     setTimeout(() => waitForPython(retries - 1, cb), 500);
   }
 }
@@ -54,45 +62,27 @@ function waitForPython(retries, cb) {
 waitForPython(20, () => {
   console.log('[Launcher] Python indicators server is ready');
 
-  // Start the bot
   const bot = spawn('npx', ['ts-node', 'src/core/loop.ts'], {
-    cwd: path.join(__dirname, '..'),
+    cwd: ROOT,
     stdio: 'inherit',
-    shell: true,
-    windowsHide: true,
+    shell: false,
   });
-  fs.writeFileSync(PID_FILE, String(bot.pid));
+  fs.writeFileSync(BOT_PID_FILE, String(bot.pid));
   console.log(`[Launcher] Bot started (PID ${bot.pid})`);
 
-  // Ensure dashboard dependencies are installed
-  const dashboardModules = path.join(__dirname, '..', 'dashboard', 'node_modules');
-  if (!fs.existsSync(dashboardModules)) {
-    console.log('[Launcher] Instalando dependências do dashboard...');
-    execSync('npm install', { cwd: path.join(__dirname, '..', 'dashboard'), stdio: 'inherit' });
-  }
-
-  // Start the dashboard
-  const dashboard = spawn('npm', ['run', 'dev'], {
-    cwd: path.join(__dirname, '..', 'dashboard'),
-    stdio: 'inherit',
-    shell: true,
-    windowsHide: true,
-  });
-  console.log('[Launcher] Dashboard iniciado em http://localhost:3001');
-
   bot.on('exit', (code) => {
-    if (fs.existsSync(PID_FILE)) fs.unlinkSync(PID_FILE);
-    // Also kill python
-    if (fs.existsSync(PY_PID_FILE)) {
-      const pid = fs.readFileSync(PY_PID_FILE, 'utf8').trim();
-      try { execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' }); } catch {}
-      try { fs.unlinkSync(PY_PID_FILE); } catch {}
-    }
+    try { fs.unlinkSync(BOT_PID_FILE); } catch {}
+    cleanup();
     process.exit(code ?? 0);
   });
 });
 
-py.on('exit', (code) => {
-  if (fs.existsSync(PY_PID_FILE)) fs.unlinkSync(PY_PID_FILE);
-  console.error(`[Launcher] Python server exited (code ${code})`);
-});
+function cleanup() {
+  for (const [proc, file] of [[py, PY_PID_FILE]]) {
+    try { proc.kill('SIGTERM'); } catch {}
+    try { fs.unlinkSync(file); } catch {}
+  }
+}
+
+process.on('SIGINT', () => { cleanup(); process.exit(0); });
+process.on('SIGTERM', () => { cleanup(); process.exit(0); });
