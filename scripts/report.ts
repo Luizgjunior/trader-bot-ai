@@ -1,6 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import fs from 'fs';
+import dotenv from 'dotenv';
+dotenv.config({ path: path.join(process.cwd(), '.env') });
 
 const DB_PATH = path.join(process.cwd(), 'data', 'tradebot.db');
 
@@ -236,3 +238,87 @@ section('ÚLTIMAS 10 OPERAÇÕES');
 }
 
 console.log('\n' + '─'.repeat(50) + '\n');
+
+// ── Telegram Report ───────────────────────────────────────────────────────────
+
+async function sendReportToTelegram(): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) {
+    console.log('[Report] TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID não configurados — pulando envio.');
+    return;
+  }
+
+  const mode = trades[0]?.paper ? 'PAPER' : 'LIVE';
+  const pair = process.env.TRADING_PAIR ?? 'BTCUSDT';
+
+  const wins = closedTrades.filter(t => (t.pnl ?? 0) > 0).length;
+  const losses = closedTrades.filter(t => (t.pnl ?? 0) < 0).length;
+  const pfStr = pf === Infinity ? '∞' : pf.toFixed(2);
+
+  const todayPnl = todayTrades.reduce((s, t) => s + (t.pnl ?? 0), 0);
+  const todayWr = calcWinRate(todayTrades);
+  const todayW = todayTrades.filter(t => (t.pnl ?? 0) > 0).length;
+  const todayL = todayTrades.filter(t => (t.pnl ?? 0) < 0).length;
+
+  const tierLines = tiers.map(([lo, hi, label]) => {
+    const tier = calcByTier(closedTrades, lo, hi);
+    if (tier.count === 0) return `${label}: sem dados`;
+    const wr = ((tier.wins / tier.count) * 100).toFixed(1);
+    const pnlStr = (tier.pnl >= 0 ? '+' : '') + tier.pnl.toFixed(2);
+    return `${label}: ${wr}% WR | ${tier.count} trades | PnL ${pnlStr}`;
+  }).join('\n');
+
+  const lastTrade = closedTrades.length > 0 ? closedTrades[closedTrades.length - 1] : null;
+  let lastLine = 'Nenhuma operação fechada';
+  if (lastTrade) {
+    const date = lastTrade.created_at.slice(0, 16).replace('T', ' ');
+    const entry = lastTrade.entry_price ? `$${lastTrade.entry_price.toFixed(2)}` : 'N/A';
+    const pnlVal = lastTrade.pnl ?? 0;
+    const pnlStr = (pnlVal >= 0 ? '+' : '') + pnlVal.toFixed(2) + ' USDT';
+    const icon = pnlVal > 0 ? '✅' : pnlVal < 0 ? '❌' : '⏸';
+    lastLine = `${date} | ${lastTrade.action} | Entry: ${entry} | PnL: ${pnlStr} ${icon}`;
+  }
+
+  const text = [
+    `📊 *RELATÓRIO TRADEBOT-AI*`,
+    `Par: ${pair} | Modo: ${mode}`,
+    ``,
+    `*Geral*`,
+    `Total trades: ${trades.length} | Fechados: ${closedTrades.length} | Abertos: ${openTrades.length}`,
+    `PnL Total: ${(totalPnl >= 0 ? '+' : '') + totalPnl.toFixed(2)} USDT`,
+    `Win Rate: ${(winRate * 100).toFixed(1)}% (${wins}W / ${losses}L)`,
+    `Profit Factor: ${pfStr}`,
+    `Drawdown Máx: ${maxDD.toFixed(2)} USDT`,
+    ``,
+    `*Hoje*`,
+    `Trades: ${todayTrades.length} | Win Rate: ${(todayWr * 100).toFixed(1)}% | PnL: ${(todayPnl >= 0 ? '+' : '') + todayPnl.toFixed(2)} USDT`,
+    ``,
+    `*Por Confidence*`,
+    tierLines,
+    ``,
+    `*Última operação*`,
+    lastLine,
+  ].join('\n');
+
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+  const body = JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' });
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+    if (res.ok) {
+      console.log('[Report] Relatório enviado ao Telegram com sucesso.');
+    } else {
+      const err = await res.text();
+      console.error('[Report] Erro ao enviar Telegram:', err);
+    }
+  } catch (e) {
+    console.error('[Report] Falha na requisição Telegram:', e);
+  }
+}
+
+sendReportToTelegram();
