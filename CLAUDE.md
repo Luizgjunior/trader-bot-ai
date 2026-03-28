@@ -14,9 +14,8 @@ Bot de trading automatizado para criptomoedas que usa **inteligência artificial
 | IA / LLM | **Claude (Anthropic SDK)** | Decisão de trade |
 | Indicadores técnicos | **Python + Flask** | TA-Lib, pandas, numpy |
 | Exchange | **Bybit via CCXT** | Execução de ordens |
-| Banco de dados | **SQLite (better-sqlite3)** | Histórico de trades e candles |
+| Banco de dados | **SQLite (node:sqlite)** | Histórico de trades e candles |
 | Notificações | **Telegram Bot** | Alertas em tempo real |
-| Containerização | **Docker Compose** | Orquestração dos serviços |
 | Validação | **Zod** | Schemas e parsing seguro |
 
 ---
@@ -24,25 +23,26 @@ Bot de trading automatizado para criptomoedas que usa **inteligência artificial
 ## Estrutura de Pastas
 
 ```
-tradebot-ai/
+trader-bot-ai/
 ├── src/
 │   ├── core/
-│   │   ├── candleStore.ts      # Armazena e gerencia candles históricos
+│   │   ├── candleStore.ts      # Armazena e gerencia candles históricos em memória
 │   │   ├── websocket.ts        # Conexão WebSocket com Bybit (candles em tempo real)
 │   │   └── loop.ts             # Loop principal do bot (entry point)
 │   ├── indicators/
 │   │   └── client.ts           # Client HTTP que chama o servidor Python de indicadores
 │   ├── ai/
-│   │   ├── contextBuilder.ts   # Monta o contexto completo para o Claude (candles, indicadores, posição atual)
+│   │   ├── contextBuilder.ts   # Monta contexto completo para o Claude
 │   │   ├── claude.ts           # Chamada à API do Claude com prompt estruturado
 │   │   └── parser.ts           # Parseia e valida a resposta JSON do Claude
 │   ├── broker/
 │   │   ├── bybit.ts            # Wrapper da API Bybit (CCXT) — saldo, posição, ordens
-│   │   └── orderManager.ts     # Gerencia ciclo de vida das ordens (abrir, fechar, monitorar)
+│   │   └── orderManager.ts     # Gerencia ciclo de vida das ordens
 │   ├── risk/
-│   │   └── sizer.ts            # Calcula tamanho de posição baseado em risco % por trade
+│   │   ├── sizer.ts            # Calcula tamanho de posição baseado em risco % por trade
+│   │   └── trailingStop.ts     # Gerencia trailing stop das posições abertas
 │   ├── notifications/
-│   │   └── telegram.ts         # Envia mensagens/alertas via Telegram Bot API
+│   │   └── telegram.ts         # Envia alertas via Telegram Bot API
 │   └── database/
 │       └── db.ts               # Inicialização SQLite + funções de persistência
 ├── python-indicators/
@@ -50,7 +50,12 @@ tradebot-ai/
 │   └── requirements.txt        # pandas, numpy, ta-lib, flask
 ├── backtest/
 │   └── run.ts                  # Runner de backtest usando dados históricos do SQLite
-├── docker-compose.yml          # Sobe Node.js bot + Python indicators como serviços
+├── scripts/
+│   ├── start.js                # Launcher: inicia Python + bot, gerencia PIDs
+│   └── report.ts               # Gera relatório de performance no terminal e Telegram
+├── data/                       # Gerado em runtime: tradebot.db, PID files, logs
+├── start.sh                    # Inicia o bot em background (Linux)
+├── stop.sh                     # Para o bot e o servidor Python (Linux)
 ├── package.json
 ├── tsconfig.json
 ├── .env.example                # Template de variáveis de ambiente
@@ -76,8 +81,7 @@ tradebot-ai/
    │
    ├── 3b. Monta contexto para o Claude
    │    └── contextBuilder.ts — inclui:
-   │         • Últimos 50 candles (OHLCV)
-   │         • Todos os indicadores calculados
+   │         • Indicadores M15, H1 e H4
    │         • Posição atual aberta (se houver)
    │         • Saldo disponível
    │         • Histórico dos últimos 5 trades
@@ -106,7 +110,7 @@ tradebot-ai/
 
 ## Risk Management
 
-### Regras obrigatórias (hardcoded)
+### Regras obrigatórias
 
 | Regra | Valor padrão | Descrição |
 |---|---|---|
@@ -116,10 +120,11 @@ tradebot-ai/
 | `MAX_OPEN_POSITIONS` | 1 | Apenas uma posição aberta por vez |
 | Stop Loss | Obrigatório | Toda ordem deve ter SL definido |
 | Take Profit | Obrigatório | Toda ordem deve ter TP (mínimo 1:1.5 R/R) |
+| `BLOCKED_HOURS` | 0–5 UTC | Horários de madrugada bloqueados (baixa liquidez) |
 
 ### Modo Paper Trading
 
-Quando `PAPER_TRADING=true`, o bot simula todas as ordens sem executar na exchange real. Útil para validar estratégias sem risco financeiro.
+Quando `PAPER_TRADING=true`, o bot simula todas as ordens sem executar na exchange real. As posições paper são armazenadas no SQLite e consultadas para evitar entradas duplicadas.
 
 ### Modo Testnet
 
@@ -143,34 +148,85 @@ cp .env.example .env
 | `BYBIT_TESTNET` | `true` = testnet, `false` = produção |
 | `TELEGRAM_BOT_TOKEN` | Token do bot Telegram |
 | `TELEGRAM_CHAT_ID` | ID do chat para receber notificações |
-| `TRADING_PAIR` | Par de trading (ex: BTCUSDT) |
-| `TIMEFRAME` | Timeframe em minutos (ex: 15) |
-| `MAX_RISK_PER_TRADE` | Risco por trade em decimal (0.01 = 1%) |
-| `DAILY_LOSS_LIMIT` | Limite de perda diária em decimal (0.02 = 2%) |
+| `TRADING_PAIR` | Par de trading (ex: `BTCUSDT`) |
+| `MAX_RISK_PER_TRADE` | Risco por trade em decimal (`0.01` = 1%) |
+| `DAILY_LOSS_LIMIT` | Limite de perda diária em decimal (`0.02` = 2%) |
 | `PAPER_TRADING` | `true` = simulação, `false` = real |
+| `INDICATORS_URL` | URL do servidor Python (padrão: `http://localhost:5001`) |
+| `ATR_SL_MULTIPLIER` | Multiplicador do ATR para Stop Loss |
+| `RR_RATIO` | Relação risco/retorno mínima |
+| `MIN_QTY` / `MAX_QTY` | Tamanho mínimo e máximo de posição em BTC |
+| `BLOCKED_HOURS` | Horas UTC bloqueadas, separadas por vírgula |
 
 ---
 
 ## Como Rodar
 
-### Com Docker (recomendado)
-```bash
-docker-compose up --build
-```
+### Instalação
 
-### Manual
 ```bash
-# Terminal 1 — Servidor Python de indicadores
+# Dependências Node.js
+npm install
+
+# Dependências Python
 cd python-indicators
 pip install -r requirements.txt
-python app.py
-
-# Terminal 2 — Bot TypeScript
-npm install
-npm start
+cd ..
 ```
 
-### Backtest
+### Iniciar (Linux/Mac)
+
+```bash
+./start.sh
+```
+
+O script inicia o servidor Python e o bot em background, salva os logs em `data/logs/bot_TIMESTAMP.log`.
+
+Para acompanhar os logs em tempo real:
+```bash
+tail -f data/logs/bot_TIMESTAMP.log
+```
+
+### Parar
+
+```bash
+./stop.sh
+```
+
+### Iniciar manualmente (qualquer OS)
+
+```bash
+node scripts/start.js
+```
+
+---
+
+## Relatório de Performance
+
+Gera um relatório completo no terminal com métricas de todos os trades fechados e envia um resumo via Telegram:
+
+```bash
+npm run report
+```
+
+Métricas exibidas: PnL total, win rate, profit factor, drawdown máximo, breakdown por confidence tier, últimas 10 operações.
+
+---
+
+## Teste de Ciclo
+
+Executa um ciclo completo do bot (busca indicadores → monta contexto → consulta Claude → decide) sem abrir ordens reais. Útil para validar que todos os componentes estão funcionando:
+
+```bash
+npm run test:cycle
+```
+
+---
+
+## Backtest
+
+Roda uma simulação histórica usando os candles armazenados no SQLite:
+
 ```bash
 npm run backtest
 ```
@@ -180,6 +236,6 @@ npm run backtest
 ## Notas Importantes
 
 - **Nunca** commitar o arquivo `.env` com chaves reais
-- O PRODUCT_ID e chaves da API são apenas para testnet — troque antes de ir para produção
 - O Claude é consultado a cada candle fechado — monitore o custo de tokens
-- Logs detalhados são salvos no SQLite para auditoria posterior
+- Logs e trades ficam em `data/tradebot.db` para auditoria posterior
+- Em paper mode, posições são detectadas via SQLite — o bot não duplica entradas
