@@ -9,6 +9,7 @@ let reconnectTimer: NodeJS.Timeout | null = null;
 let onCandleClose: (() => void) | null = null;
 let heartbeatTimer: NodeJS.Timeout | null = null;
 let pongTimer: NodeJS.Timeout | null = null;
+let reconnectAttempts = 0;
 
 function startHeartbeat(): void {
   stopHeartbeat();
@@ -39,12 +40,19 @@ export function connectWebSocket(
 
   console.log(`[WS] Connecting to ${url} — topics: ${topics.join(', ')}`);
 
+  if (ws) {
+    ws.removeAllListeners();
+    ws.terminate();
+    ws = null;
+  }
+
   ws = new WebSocket(url);
 
   ws.on('open', () => {
     console.log('[WS] Connected');
     ws!.send(JSON.stringify({ op: 'subscribe', args: topics }));
     startHeartbeat();
+    reconnectAttempts = 0;
   });
 
   ws.on('pong', () => {
@@ -102,11 +110,16 @@ function scheduleReconnect(
   onClose: () => void
 ): void {
   if (reconnectTimer) clearTimeout(reconnectTimer);
+  const delay = Math.min(5000 * Math.pow(2, reconnectAttempts), 60_000);
+  reconnectAttempts++;
+  console.warn(`[WS] Reconectando em ${delay / 1000}s (tentativa ${reconnectAttempts})...`);
   reconnectTimer = setTimeout(() => {
     connectWebSocket(pair, testnet, onClose);
-  }, 5000);
+  }, delay);
 }
 
 export function disconnectWebSocket(): void {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  reconnectAttempts = 0;
   ws?.close();
 }
