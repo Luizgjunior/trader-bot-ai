@@ -8,7 +8,7 @@ import { parseClaudeResponse } from '../ai/parser';
 import { checkRisk } from '../risk/sizer';
 import { checkTrailingStop } from '../risk/trailingStop';
 import { executeDecision } from '../broker/orderManager';
-import { sendTelegram } from '../notifications/telegram';
+import { sendTelegram, formatAnalise, formatEntrada, formatFechamento } from '../notifications/telegram';
 
 const PAIR = process.env.TRADING_PAIR ?? 'BTCUSDT';
 const TESTNET = process.env.BYBIT_TESTNET === 'true';
@@ -31,17 +31,6 @@ let candleCount = 0;
 let skipUntilCandle = 0;
 // ───────────────────────────────────────────────────────────────────────────
 
-function trendEmoji(trend: string): string {
-  if (trend === 'bullish') return '🟢';
-  if (trend === 'bearish') return '🔴';
-  return '🟡';
-}
-
-function actionPtBr(action: string): string {
-  if (action === 'BUY')  return 'COMPRA';
-  if (action === 'SELL') return 'VENDA';
-  return 'AGUARDAR';
-}
 
 async function checkPaperClosures(currentPrice: number): Promise<void> {
   const open = getOpenPaperTrades();
@@ -60,13 +49,8 @@ async function checkPaperClosures(currentPrice: number): Promise<void> {
 
     closePaperTrade(trade.id, pnl);
 
-    const icone = hitTP ? '✅ Take Profit' : '🛑 Stop Loss';
-    const sinal = pnl >= 0 ? '+' : '';
-    await sendTelegram(
-      `${icone} atingido 🧪 PAPER\n` +
-      `${actionPtBr(trade.action)} encerrada • Preço: $${exitPrice.toLocaleString('pt-BR')}\n` +
-      `PnL: ${sinal}${pnl.toFixed(4)} USDT`
-    );
+    const icone = hitTP ? '✅ TP' : '🛑 SL';
+    await sendTelegram(formatFechamento(trade, exitPrice, pnl, hitTP, PAIR, TESTNET));
     console.log(`[Paper] Trade #${trade.id} fechado — ${icone} | PnL: ${pnl.toFixed(4)}`);
   }
 }
@@ -101,7 +85,8 @@ async function onCandleClose(): Promise<void> {
       const update = checkTrailingStop(trade, context.currentPrice);
       if (update) {
         console.log(`[Trailing] Trade #${trade.id} — ${update}`);
-        await sendTelegram(`🔄 Trailing Stop #${trade.id}: ${update}`);
+        const acaoPt = trade.action === 'BUY' ? 'COMPRA' : 'VENDA';
+        await sendTelegram(`🔄 *Trailing Stop* #${trade.id} (${acaoPt})\n${update}`);
       }
     }
 
@@ -147,6 +132,7 @@ async function onCandleClose(): Promise<void> {
     const decision = parseClaudeResponse(rawResponse);
 
     console.log(`[Loop] Decisão Claude: ${decision.action} (confiança: ${decision.confidence})`);
+    await sendTelegram(formatAnalise(decision, context, PAIR));
 
     if (decision.action === 'HOLD') {
       consecutiveHolds++;
@@ -166,18 +152,7 @@ async function onCandleClose(): Promise<void> {
 
     if (result.executed) {
       setSetting('last_activity_ts', String(Date.now()));
-      const acao = actionPtBr(decision.action);
-      const mtfLine = `M15: ${trendEmoji(context.m15.ema_trend)} | H1: ${trendEmoji(context.h1.ema_trend)} | H4: ${trendEmoji(context.h4.ema_trend)}`;
-      const modo = TESTNET ? '🧪 TESTE' : '💰 REAL';
-      const msg =
-        `✅ *${acao}* ${PAIR} ${modo}\n` +
-        `${mtfLine}\n` +
-        `Confiança: ${(decision.confidence * 100).toFixed(0)}%\n` +
-        `Preço atual: $${context.currentPrice.toLocaleString('pt-BR')}\n` +
-        `Stop Loss: $${result.stopLoss?.toLocaleString('pt-BR')}\n` +
-        `Take Profit: $${result.takeProfit?.toLocaleString('pt-BR')}\n` +
-        `Motivo: ${decision.reasoning}`;
-      await sendTelegram(msg);
+      await sendTelegram(formatEntrada(decision, context, result, PAIR, TESTNET));
     }
   } catch (err) {
     console.error('[Loop] Erro no ciclo:', err);
@@ -191,7 +166,9 @@ function _checkCircuit(): void {
   if (consecutiveHolds >= HOLD_CIRCUIT_THRESHOLD) {
     skipUntilCandle = candleCount + HOLD_CIRCUIT_SKIP;
     consecutiveHolds = 0;
+    const msg = `⏸ *Circuit breaker ativado* — ${HOLD_CIRCUIT_THRESHOLD} HOLDs seguidos\nClaude pausado por ${HOLD_CIRCUIT_SKIP} candles M15 (~${HOLD_CIRCUIT_SKIP * 15}min)`;
     console.log(`[Loop] ${HOLD_CIRCUIT_THRESHOLD} HOLDs seguidos — pausando Claude por ${HOLD_CIRCUIT_SKIP} candles M15 (~${HOLD_CIRCUIT_SKIP * 15}min)`);
+    sendTelegram(msg).catch(() => {});
   }
 }
 

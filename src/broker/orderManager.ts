@@ -10,6 +10,7 @@ export interface ExecutionResult {
   orderId?: string;
   stopLoss?: number;
   takeProfit?: number;
+  size?: number;
 }
 
 export async function executeDecision(decision: ClaudeDecision, context: TradingContext): Promise<ExecutionResult> {
@@ -66,7 +67,7 @@ export async function executeDecision(decision: ClaudeDecision, context: Trading
       paper: true,
       entryPrice: context.currentPrice,
     });
-    return { executed: true, orderId: `PAPER-${Date.now()}`, stopLoss, takeProfit };
+    return { executed: true, orderId: `PAPER-${Date.now()}`, stopLoss, takeProfit, size };
   }
 
   const orderId = await placeMarketOrder(
@@ -87,5 +88,5 @@ export async function executeDecision(decision: ClaudeDecision, context: Trading
     orderId,
   });
 
-  return { executed: true, orderId, stopLoss, takeProfit };
+  return { executed: true, orderId, stopLoss, takeProfit, size };
 }

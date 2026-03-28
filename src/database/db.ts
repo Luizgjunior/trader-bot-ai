@@ -109,11 +109,12 @@ export interface OpenPaperTrade {
   stop_loss: number;
   take_profit: number;
   entry_price: number | null;
+  created_at: string;
 }
 
 export function getOpenPaperTrades(): OpenPaperTrade[] {
   return getDb().prepare(`
-    SELECT id, action, size, stop_loss, take_profit, entry_price
+    SELECT id, action, size, stop_loss, take_profit, entry_price, created_at
     FROM trades WHERE paper = 1 AND pnl IS NULL
   `).all() as unknown as OpenPaperTrade[];
 }
