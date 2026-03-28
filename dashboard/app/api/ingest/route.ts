@@ -1,4 +1,4 @@
-import { redis } from '../../../lib/redis';
+import { store } from '../../../lib/store';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(req: NextRequest) {
@@ -13,26 +13,26 @@ export async function POST(req: NextRequest) {
 
   switch (type) {
     case 'heartbeat':
-      await redis.set('bot:status', JSON.stringify({ online: true, ...event, ts: Date.now() }), 'EX', 600);
+      store.set('status', { online: true, ...event, ts: Date.now() });
       break;
 
     case 'analysis':
-      await redis.lpush('bot:analyses', JSON.stringify(event));
-      await redis.ltrim('bot:analyses', 0, 49);
+      store.lpush('analyses', JSON.stringify(event));
+      store.ltrim('analyses', 49);
       break;
 
     case 'trade_open':
-      await redis.hset('bot:open_trades', event.tradeId, JSON.stringify(event));
+      store.hset(event.tradeId, JSON.stringify(event));
       break;
 
     case 'trade_close':
-      await redis.hdel('bot:open_trades', event.tradeId);
-      await redis.lpush('bot:closed_trades', JSON.stringify(event));
-      await redis.ltrim('bot:closed_trades', 0, 199);
+      store.hdel(event.tradeId);
+      store.lpush('closedTrades', JSON.stringify(event));
+      store.ltrim('closedTrades', 199);
       break;
 
     case 'balance':
-      await redis.set('bot:balance', JSON.stringify(event));
+      store.set('balance', JSON.stringify(event));
       break;
 
     default:

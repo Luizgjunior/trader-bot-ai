@@ -1,4 +1,4 @@
-import { redis } from '../../../lib/redis';
+import { store } from '../../../lib/store';
 import { NextResponse } from 'next/server';
 
 function calcEquity(closedTrades: Array<{ pnl: number }>): Array<{ index: number; equity: number }> {
@@ -10,32 +10,23 @@ function calcEquity(closedTrades: Array<{ pnl: number }>): Array<{ index: number
 }
 
 export async function GET() {
-  const [statusRaw, analyses, openTradesHash, closedRaw, balanceRaw] = await Promise.all([
-    redis.get('bot:status'),
-    redis.lrange('bot:analyses', 0, 9),
-    redis.hgetall('bot:open_trades'),
-    redis.lrange('bot:closed_trades', 0, 199),
-    redis.get('bot:balance'),
-  ]);
+  const statusRaw = store.get('status');
+  const analysesRaw = store.get('analyses') as string[];
+  const openTradesHash = store.get('openTrades') as Record<string, string>;
+  const closedRaw = store.get('closedTrades') as string[];
+  const balanceRaw = store.get('balance') as string | null;
 
-  const status = statusRaw ? JSON.parse(statusRaw) : null;
-
-  const openTrades = openTradesHash
-    ? Object.values(openTradesHash).map(v => JSON.parse(v))
-    : [];
-
-  const closedTrades = (closedRaw as string[]).map(v => JSON.parse(v)).reverse();
-
-  const parsedAnalyses = (analyses as string[]).map(v => JSON.parse(v));
-
+  const openTrades = Object.values(openTradesHash ?? {}).map(v => JSON.parse(v));
+  const closedTrades = (closedRaw ?? []).map(v => JSON.parse(v));
+  const parsedAnalyses = (analysesRaw ?? []).map(v => JSON.parse(v));
   const equity = calcEquity(closedTrades);
 
   return NextResponse.json({
-    status,
+    status: statusRaw ?? null,
     analyses: parsedAnalyses,
     openTrades,
     closedTrades,
-    balance: balanceRaw ? JSON.parse(balanceRaw) : null,
+    balance: balanceRaw ? JSON.parse(balanceRaw as string) : null,
     equity,
   });
 }
