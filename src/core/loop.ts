@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import { connectWebSocket } from './websocket';
 import { fetchAndLoadHistoricalCandles, isStoreReady } from './candleStore';
-import { initDb, getSetting, setSetting, getOpenPaperTrades, closePaperTrade } from '../database/db';
-import { buildContext } from '../ai/contextBuilder';
+import { initDb, getSetting, setSetting, getOpenPaperTrades, closePaperTrade, getDailyStats } from '../database/db';
+import { buildContext, type TradingContext } from '../ai/contextBuilder';
 import { askClaude } from '../ai/claude';
 import { parseClaudeResponse } from '../ai/parser';
 import { checkRisk } from '../risk/sizer';
@@ -91,22 +91,24 @@ async function onCandleClose(): Promise<void> {
   try {
     const context = await buildContext();
 
+    await maybeSendDailySummary(context);
+
     // ── Filtro: hora bloqueada (baixa liquidez) ──────────────────────────
     if (BLOCKED_HOURS.has(context.hour)) {
-      console.log(`[Loop] Hora ${context.hour}h UTC bloqueada — pulando ciclo`);
+      logCycle(context, `bloqueado (${context.hour}h UTC)`);
       return;
     }
 
     // ── Pré-filtro: timeframes desalinhados ──────────────────────────────
     if (context.timeframe_alignment === 'mixed') {
-      console.log('[Loop] Timeframes desalinhados (mixed) — chamada Claude cancelada');
+      logCycle(context, 'cancelado (mixed)');
       consecutiveHolds++;
       _checkCircuit();
       return;
     }
 
     if (context.h4.ema_trend === 'neutral') {
-      console.log('[Loop] H4 neutro — tendência principal indefinida, chamada Claude cancelada');
+      logCycle(context, 'cancelado (H4 neutro)');
       consecutiveHolds++;
       _checkCircuit();
       return;
@@ -114,7 +116,7 @@ async function onCandleClose(): Promise<void> {
 
     // ── Filtro ADX: evita mercados laterais ──────────────────────────────
     if (context.h4.adx_strength === 'no_trend') {
-      console.log(`[Loop] H4 ADX fraco (${context.h4.adx.toFixed(1)}) — mercado lateral, chamada Claude cancelada`);
+      logCycle(context, `cancelado (ADX fraco ${context.h4.adx.toFixed(1)})`);
       consecutiveHolds++;
       _checkCircuit();
       return;
@@ -122,7 +124,7 @@ async function onCandleClose(): Promise<void> {
 
     // ── Filtro Volume: evita candles sem liquidez ─────────────────────────
     if (context.m15.volume_vs_avg === 'low') {
-      console.log('[Loop] Volume M15 baixo — aguardando liquidez');
+      logCycle(context, 'aguardando liquidez');
       return;
     }
     // ────────────────────────────────────────────────────────────────────
@@ -130,13 +132,12 @@ async function onCandleClose(): Promise<void> {
     // Verifica se alguma posição paper atingiu SL ou TP
     await checkPaperClosures(context.currentPrice);
 
-    console.log('[Loop] Nova candle fechada — rodando ciclo IA...');
+    logCycle(context, 'Claude chamado');
 
     const rawResponse = await askClaude(context);
     const decision = parseClaudeResponse(rawResponse);
 
     console.log(`[Loop] Decisão Claude: ${decision.action} (confiança: ${decision.confidence})`);
-    console.log(`[Loop] Alinhamento: M15: ${context.m15.ema_trend} | H1: ${context.h1.ema_trend} | H4: ${context.h4.ema_trend}`);
 
     if (decision.action === 'HOLD') {
       consecutiveHolds++;
@@ -182,6 +183,30 @@ function _checkCircuit(): void {
     consecutiveHolds = 0;
     console.log(`[Loop] ${HOLD_CIRCUIT_THRESHOLD} HOLDs seguidos — pausando Claude por ${HOLD_CIRCUIT_SKIP} candles M15 (~${HOLD_CIRCUIT_SKIP * 15}min)`);
   }
+}
+
+function nowUTC(): string {
+  const d = new Date();
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+}
+
+function logCycle(context: TradingContext, outcome: string): void {
+  const mtf = context.timeframe_alignment === 'mixed' ? 'mixed' : context.timeframe_alignment;
+  console.log(`[Loop] ${nowUTC()} UTC | MTF: ${mtf} | ADX: ${context.h4.adx.toFixed(1)} | Vol: ${context.m15.volume_vs_avg} | → ${outcome}`);
+}
+
+async function maybeSendDailySummary(context: TradingContext): Promise<void> {
+  if (context.hour !== 23 || new Date().getUTCMinutes() < 45) return;
+  const today = new Date().toISOString().slice(0, 10);
+  if (getSetting('last_daily_summary_date') === today) return;
+  const stats = getDailyStats();
+  setSetting('last_daily_summary_date', today);
+  const sign = stats.pnl >= 0 ? '+' : '';
+  const wr = stats.tradeCount > 0 ? `${(stats.winRate * 100).toFixed(0)}%` : 'N/A';
+  await sendTelegram(
+    `📊 *Resumo do dia:* ${stats.tradeCount} trades | Win rate ${wr} | PnL: ${sign}${stats.pnl.toFixed(2)} USDT`
+  );
+  console.log(`[Loop] Resumo diário enviado — ${stats.tradeCount} trades | Win rate ${wr} | PnL: ${sign}${stats.pnl.toFixed(2)} USDT`);
 }
 
 async function main(): Promise<void> {

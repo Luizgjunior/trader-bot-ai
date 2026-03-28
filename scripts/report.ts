@@ -38,6 +38,8 @@ const trades = db.prepare(`
 
 const closedTrades = trades.filter(t => t.pnl !== null);
 const openTrades = trades.filter(t => t.pnl === null);
+const today = new Date().toISOString().slice(0, 10);
+const todayTrades = closedTrades.filter(t => t.created_at.startsWith(today));
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -148,6 +150,29 @@ console.log(`  Win Rate        : ${bar(winRate)} ${pct(winRate)} (${closedTrades
 console.log(`  Profit Factor   : ${pf === Infinity ? '∞' : pf.toFixed(2)}`);
 console.log(`  Drawdown Máx    : ${usd(maxDD)}`);
 
+section('HOJE vs ACUMULADO');
+{
+  const todayPnl = todayTrades.reduce((s, t) => s + (t.pnl ?? 0), 0);
+  const todayWr = calcWinRate(todayTrades);
+  const todayW = todayTrades.filter(t => (t.pnl ?? 0) > 0).length;
+  const todayL = todayTrades.filter(t => (t.pnl ?? 0) < 0).length;
+  console.log(`  Hoje  — Trades: ${String(todayTrades.length).padStart(3)} | Win Rate: ${bar(todayWr, 10)} ${pct(todayWr)} (${todayW}W/${todayL}L) | PnL: ${usd(todayPnl)}`);
+  console.log(`  Total — Trades: ${String(closedTrades.length).padStart(3)} | Win Rate: ${bar(winRate, 10)} ${pct(winRate)} (${closedTrades.filter(t => (t.pnl ?? 0) > 0).length}W/${closedTrades.filter(t => (t.pnl ?? 0) < 0).length}L) | PnL: ${usd(totalPnl)}`);
+}
+
+section('MELHOR E PIOR TRADE');
+{
+  const best = closedTrades.reduce((a, b) => (b.pnl ?? 0) > (a.pnl ?? 0) ? b : a);
+  const worst = closedTrades.reduce((a, b) => (b.pnl ?? 0) < (a.pnl ?? 0) ? b : a);
+  const fmt = (t: TradeRow) => {
+    const entry = t.entry_price ? `$${t.entry_price.toFixed(2)}` : 'N/A';
+    const date = t.created_at.slice(0, 16).replace('T', ' ');
+    return `${date} | ${t.action} | Entry: ${entry} | PnL: ${usd(t.pnl ?? 0)} | conf: ${(t.confidence * 100).toFixed(0)}%`;
+  };
+  console.log(`  🏆 Melhor: ${fmt(best)}`);
+  console.log(`  💀 Pior  : ${fmt(worst)}`);
+}
+
 section('WIN RATE POR TIPO DE SINAL');
 for (const action of ['BUY', 'SELL'] as const) {
   const rows = closedTrades.filter(t => t.action === action);
@@ -176,15 +201,37 @@ for (const [lo, hi, label] of tiers) {
 }
 if (!hasAnyTier) console.log('  Nenhum trade com confiança no intervalo analisado.');
 
-section('ÚLTIMAS 5 OPERAÇÕES');
-const last5 = closedTrades.slice(-5).reverse();
-for (const t of last5) {
-  const pnlStr = t.pnl !== null ? usd(t.pnl) : 'aberto';
-  const conf = (t.confidence * 100).toFixed(0) + '%';
-  const date = t.created_at.slice(0, 16);
-  console.log(`  [${date}] ${t.action.padEnd(4)} conf=${conf} pnl=${pnlStr}`);
-  if (t.reasoning) {
-    console.log(`            ${t.reasoning.slice(0, 70)}${t.reasoning.length > 70 ? '…' : ''}`);
+section('ÚLTIMAS 10 OPERAÇÕES');
+{
+  const hdr = [
+    'Data/Hora'.padEnd(16),
+    'Ação'.padEnd(4),
+    'Entry'.padStart(10),
+    'SL'.padStart(10),
+    'TP'.padStart(10),
+    'PnL'.padStart(12),
+    'Resultado',
+  ].join('  ');
+  console.log(`  ${hdr}`);
+  console.log('  ' + '─'.repeat(hdr.length));
+  const last10 = closedTrades.slice(-10).reverse();
+  for (const t of last10) {
+    const date = t.created_at.slice(0, 16).replace('T', ' ');
+    const entry = t.entry_price ? `$${t.entry_price.toFixed(2)}` : 'N/A';
+    const sl = `$${t.stop_loss.toFixed(2)}`;
+    const tp = `$${t.take_profit.toFixed(2)}`;
+    const pnlStr = t.pnl !== null ? usd(t.pnl) : '—';
+    const resultado = (t.pnl ?? 0) > 0 ? '✅ WIN' : (t.pnl ?? 0) < 0 ? '❌ LOSS' : '⏸ EMPATE';
+    const row = [
+      date.padEnd(16),
+      t.action.padEnd(4),
+      entry.padStart(10),
+      sl.padStart(10),
+      tp.padStart(10),
+      pnlStr.padStart(12),
+      resultado,
+    ].join('  ');
+    console.log(`  ${row}`);
   }
 }
 

@@ -130,3 +130,26 @@ export function getDailyPnl(): number {
   `).get() as unknown as { total: number };
   return row.total;
 }
+
+export interface DailyStats {
+  tradeCount: number;
+  winCount: number;
+  winRate: number;
+  pnl: number;
+}
+
+export function getDailyStats(): DailyStats {
+  const row = getDb().prepare(`
+    SELECT
+      COUNT(*) as tradeCount,
+      SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winCount,
+      COALESCE(SUM(pnl), 0) as pnl
+    FROM trades
+    WHERE date(created_at) = date('now') AND pnl IS NOT NULL
+  `).get() as unknown as { tradeCount: number; winCount: number | null; pnl: number };
+
+  const tradeCount = row.tradeCount;
+  const winCount = row.winCount ?? 0;
+  const winRate = tradeCount > 0 ? winCount / tradeCount : 0;
+  return { tradeCount, winCount, winRate, pnl: row.pnl };
+}
