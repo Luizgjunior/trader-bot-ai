@@ -6,6 +6,7 @@ import { buildContext, type TradingContext } from '../ai/contextBuilder';
 import { askClaude } from '../ai/claude';
 import { parseClaudeResponse } from '../ai/parser';
 import { checkRisk } from '../risk/sizer';
+import { checkTrailingStop } from '../risk/trailingStop';
 import { executeDecision } from '../broker/orderManager';
 import { sendTelegram } from '../notifications/telegram';
 
@@ -92,6 +93,17 @@ async function onCandleClose(): Promise<void> {
     const context = await buildContext();
 
     await maybeSendDailySummary(context);
+    await maybeAlertInactivity();
+
+    // ── Monitoramento de posições abertas (roda todo ciclo) ──────────────
+    await checkPaperClosures(context.currentPrice);
+    for (const trade of getOpenPaperTrades()) {
+      const update = checkTrailingStop(trade, context.currentPrice);
+      if (update) {
+        console.log(`[Trailing] Trade #${trade.id} — ${update}`);
+        await sendTelegram(`🔄 Trailing Stop #${trade.id}: ${update}`);
+      }
+    }
 
     // ── Filtro: hora bloqueada (baixa liquidez) ──────────────────────────
     if (BLOCKED_HOURS.has(context.hour)) {
@@ -129,9 +141,6 @@ async function onCandleClose(): Promise<void> {
     }
     // ────────────────────────────────────────────────────────────────────
 
-    // Verifica se alguma posição paper atingiu SL ou TP
-    await checkPaperClosures(context.currentPrice);
-
     logCycle(context, 'Claude chamado');
 
     const rawResponse = await askClaude(context);
@@ -156,6 +165,7 @@ async function onCandleClose(): Promise<void> {
     const result = await executeDecision(decision, context);
 
     if (result.executed) {
+      setSetting('last_activity_ts', String(Date.now()));
       const acao = actionPtBr(decision.action);
       const mtfLine = `M15: ${trendEmoji(context.m15.ema_trend)} | H1: ${trendEmoji(context.h1.ema_trend)} | H4: ${trendEmoji(context.h4.ema_trend)}`;
       const modo = TESTNET ? '🧪 TESTE' : '💰 REAL';
@@ -195,6 +205,18 @@ function logCycle(context: TradingContext, outcome: string): void {
   console.log(`[Loop] ${nowUTC()} UTC | MTF: ${mtf} | ADX: ${context.h4.adx.toFixed(1)} | Vol: ${context.m15.volume_vs_avg} | → ${outcome}`);
 }
 
+async function maybeAlertInactivity(): Promise<void> {
+  const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+  const lastTs = getSetting('last_activity_ts');
+  if (!lastTs) return;
+  if (Date.now() - Number(lastTs) < TWENTY_FOUR_HOURS) return;
+  setSetting('last_activity_ts', String(Date.now())); // reset antes de enviar para não repetir
+  await sendTelegram(
+    '⚠️ Bot ativo há 24h sem trades. Filtros muito restritivos ou mercado lateral prolongado.'
+  );
+  console.log('[Loop] Alerta inatividade enviado — 24h sem nenhum trade executado');
+}
+
 async function maybeSendDailySummary(context: TradingContext): Promise<void> {
   if (context.hour !== 23 || new Date().getUTCMinutes() < 45) return;
   const today = new Date().toISOString().slice(0, 10);
@@ -225,6 +247,11 @@ async function main(): Promise<void> {
   const FIVE_MINUTES = 5 * 60 * 1000;
   const lastStarted = getSetting('last_started_ts');
   const now = Date.now();
+
+  // Inicializa janela de inatividade na primeira execução
+  if (!getSetting('last_activity_ts')) {
+    setSetting('last_activity_ts', String(now));
+  }
   if (!lastStarted || now - Number(lastStarted) > FIVE_MINUTES) {
     setSetting('last_started_ts', String(now));
     const modo = TESTNET ? '🧪 Testnet (paper)' : '💰 Mainnet (real)';
