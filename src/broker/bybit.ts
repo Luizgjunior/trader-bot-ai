@@ -1,4 +1,5 @@
 import { bybit as BybitExchange, type Position as CcxtPosition } from 'ccxt';
+import { getOpenPaperTrades } from '../database/db';
 
 let exchange: BybitExchange | null = null;
 
@@ -39,7 +40,17 @@ export interface Position {
 }
 
 export async function getCurrentPosition(): Promise<Position | null> {
-  if (process.env.PAPER_TRADING === 'true') return null;
+  if (process.env.PAPER_TRADING === 'true') {
+    const open = getOpenPaperTrades();
+    if (open.length === 0) return null;
+    const trade = open[0];
+    return {
+      side: trade.action === 'BUY' ? 'long' : 'short',
+      size: trade.size,
+      entryPrice: trade.entry_price ?? 0,
+      unrealizedPnl: 0,
+    };
+  }
 
   const ex = getExchange();
   const pair = process.env.TRADING_PAIR ?? 'BTCUSDT';
