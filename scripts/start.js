@@ -62,6 +62,13 @@ waitForPython(20, () => {
   fs.writeFileSync(PID_FILE, String(bot.pid));
   console.log(`[Launcher] Bot started (PID ${bot.pid})`);
 
+  // Ensure dashboard dependencies are installed
+  const dashboardModules = path.join(__dirname, '..', 'dashboard', 'node_modules');
+  if (!fs.existsSync(dashboardModules)) {
+    console.log('[Launcher] Instalando dependências do dashboard...');
+    execSync('npm install', { cwd: path.join(__dirname, '..', 'dashboard'), stdio: 'inherit' });
+  }
+
   // Start the dashboard
   const dashboard = spawn('npm', ['run', 'dev'], {
     cwd: path.join(__dirname, '..', 'dashboard'),
