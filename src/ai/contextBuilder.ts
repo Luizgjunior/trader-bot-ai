@@ -21,6 +21,7 @@ export interface TradingContext {
   m15: TimeframeData;
   h1: TimeframeData;
   h4: TimeframeData;
+  d1: TimeframeData | null;
   timeframe_alignment: 'bullish' | 'bearish' | 'mixed';
   position: object | null;
   balance: number;
@@ -100,11 +101,13 @@ export async function buildContext(pair: string): Promise<TradingContext> {
   const candles15  = getCandles(200, pair, '15');
   const candles60  = getCandles(200, pair, '60');
   const candles240 = getCandles(200, pair, '240');
+  const candlesD1  = getCandles(200, pair, 'D');
 
-  const [ind15, ind60, ind240, position, balance] = await Promise.all([
+  const [ind15, ind60, ind240, indD1Result, position, balance] = await Promise.all([
     fetchIndicators(candles15),
     fetchIndicators(candles60),
     fetchIndicators(candles240),
+    candlesD1.length >= 50 ? fetchIndicators(candlesD1).catch(() => null) : Promise.resolve(null),
     getCurrentPosition(),
     getBalance(),
   ]);
@@ -119,6 +122,16 @@ export async function buildContext(pair: string): Promise<TradingContext> {
   const tf15  = buildTimeframeData(ind15,  currentPrice);
   const tf60  = buildTimeframeData(ind60,  currentPrice);
   const tf240 = buildTimeframeData(ind240, currentPrice);
+
+  let tfD1: TimeframeData | null = null;
+  if (indD1Result) {
+    try {
+      assertIndicators(indD1Result, 'D1');
+      tfD1 = buildTimeframeData(indD1Result, currentPrice);
+    } catch {
+      tfD1 = null;
+    }
+  }
 
   // Use actual last candle volume for M15 (most recent)
   if (lastCandle && ind15.volumeSma > 0) {
@@ -143,6 +156,7 @@ export async function buildContext(pair: string): Promise<TradingContext> {
     m15: tf15,
     h1:  tf60,
     h4:  tf240,
+    d1:  tfD1,
     timeframe_alignment,
     position,
     balance,

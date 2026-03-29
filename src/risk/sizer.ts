@@ -65,8 +65,11 @@ export function calculateSLTP(
 ): SLTPResult {
   const atrMultiplier = parseFloat(process.env.ATR_SL_MULTIPLIER ?? '1.5');
   const rrRatio = parseFloat(process.env.RR_RATIO ?? '2.0');
+  const maxSlPct = parseFloat(process.env.MAX_SL_PCT ?? '0.08'); // cap em 8% do preço
 
-  const slDistance = atr * atrMultiplier;
+  const rawSlDistance = atr * atrMultiplier;
+  const maxSlDistance = currentPrice * maxSlPct;
+  const slDistance = Math.min(rawSlDistance, maxSlDistance);
   const tpDistance = slDistance * rrRatio;
 
   if (action === 'BUY') {

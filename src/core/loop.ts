@@ -188,6 +188,20 @@ async function onCandleClose(pair: string): Promise<void> {
       state.consecutiveHolds = 0;
     }
 
+    // ── Filtro D1: bloqueia trades contra a tendência macro diária ────────
+    if (decision.action !== 'HOLD' && context.d1 && context.d1.ema_trend !== 'neutral') {
+      const d1Trend = context.d1.ema_trend;
+      if ((decision.action === 'BUY' && d1Trend === 'bearish') ||
+          (decision.action === 'SELL' && d1Trend === 'bullish')) {
+        logCycle(context, `bloqueado (contra D1: ${d1Trend})`);
+        state.consecutiveHolds++;
+        _checkCircuit(pair, state);
+        await addResult({ pair, action: 'HOLD', confidence: decision.confidence, reasoning: decision.reasoning, blocked: `contra D1 (${d1Trend})` });
+        return;
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
     const riskCheck = await checkRisk(decision);
     if (!riskCheck.allowed) {
       console.warn(`[Loop] ${pair} Operação bloqueada pelo gerenciador de risco: ${riskCheck.reason}`);

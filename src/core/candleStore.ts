@@ -12,9 +12,9 @@ export interface Candle {
   volume: number;
 }
 
-export type Timeframe = '15' | '60' | '240';
-export const TIMEFRAMES: Timeframe[] = ['15', '60', '240'];
-const TF_LABEL: Record<Timeframe, string> = { '15': 'M15', '60': 'H1', '240': 'H4' };
+export type Timeframe = '15' | '60' | '240' | 'D';
+export const TIMEFRAMES: Timeframe[] = ['15', '60', '240', 'D'];
+const TF_LABEL: Record<Timeframe, string> = { '15': 'M15', '60': 'H1', '240': 'H4', 'D': 'D1' };
 
 const MAX_CANDLES = 200;
 
@@ -93,7 +93,7 @@ export async function fetchAndLoadHistoricalCandles(
   const symbol = `${pair.slice(0, -4)}/${pair.slice(-4)}:USDT`;
 
   for (const tf of TIMEFRAMES) {
-    const ccxtTf = tf === '15' ? '15m' : tf === '60' ? '1h' : '4h';
+    const ccxtTf = tf === '15' ? '15m' : tf === '60' ? '1h' : tf === '240' ? '4h' : '1d';
     const ohlcv = await exchange.fetchOHLCV(symbol, ccxtTf, undefined, 200);
 
     const store = getStore(pair, tf);
