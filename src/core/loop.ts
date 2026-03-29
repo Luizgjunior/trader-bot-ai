@@ -229,9 +229,7 @@ function _checkCircuit(pair: string, state: PairState): void {
   if (state.consecutiveHolds >= HOLD_CIRCUIT_THRESHOLD) {
     state.skipUntilCandle = state.candleCount + HOLD_CIRCUIT_SKIP;
     state.consecutiveHolds = 0;
-    const msg = `⏸ *Circuit breaker ativado* (${pair}) — ${HOLD_CIRCUIT_THRESHOLD} HOLDs seguidos\nClaude pausado por ${HOLD_CIRCUIT_SKIP} candles M15 (~${HOLD_CIRCUIT_SKIP * 15}min)`;
     console.log(`[Loop] ${pair} ${HOLD_CIRCUIT_THRESHOLD} HOLDs seguidos — pausando Claude por ${HOLD_CIRCUIT_SKIP} candles M15 (~${HOLD_CIRCUIT_SKIP * 15}min)`);
-    sendTelegram(msg).catch(() => {});
   }
 }
 
