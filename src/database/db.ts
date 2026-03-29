@@ -20,14 +20,23 @@ export function initDb(): void {
   db.exec('PRAGMA journal_mode=WAL;');
   db.exec('PRAGMA busy_timeout=3000;');
 
+  // Migration: recria candles se não tiver coluna pair (schema antigo)
+  const hasPair = (db.prepare(`PRAGMA table_info(candles)`).all() as { name: string }[])
+    .some(col => col.name === 'pair');
+  if (!hasPair) {
+    db.exec('DROP TABLE IF EXISTS candles');
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS candles (
-      timestamp INTEGER PRIMARY KEY,
+      pair TEXT NOT NULL,
+      timestamp INTEGER NOT NULL,
       open REAL NOT NULL,
       high REAL NOT NULL,
       low REAL NOT NULL,
       close REAL NOT NULL,
-      volume REAL NOT NULL
+      volume REAL NOT NULL,
+      PRIMARY KEY (pair, timestamp)
     );
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -38,6 +47,7 @@ export function initDb(): void {
     CREATE TABLE IF NOT EXISTS trades (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      pair TEXT NOT NULL DEFAULT 'BTCUSDT',
       action TEXT NOT NULL,
       size REAL NOT NULL,
       stop_loss REAL NOT NULL,
@@ -51,8 +61,9 @@ export function initDb(): void {
     );
   `);
 
-  // Migration: adiciona entry_price em DBs antigos que não tinham a coluna
+  // Migrations para DBs antigos
   try { db.exec('ALTER TABLE trades ADD COLUMN entry_price REAL'); } catch {}
+  try { db.exec("ALTER TABLE trades ADD COLUMN pair TEXT NOT NULL DEFAULT 'BTCUSDT'"); } catch {}
 
   console.log(`[DB] Initialized at ${DB_PATH}`);
 }
@@ -63,6 +74,7 @@ export function getDb(): DatabaseSync {
 }
 
 export interface TradeRecord {
+  pair: string;
   action: string;
   size: number;
   stopLoss: number;
@@ -77,18 +89,25 @@ export interface TradeRecord {
 
 export function saveTradeRecord(trade: TradeRecord): void {
   getDb().prepare(`
-    INSERT INTO trades (action, size, stop_loss, take_profit, confidence, reasoning, paper, order_id, pnl, entry_price)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO trades (pair, action, size, stop_loss, take_profit, confidence, reasoning, paper, order_id, pnl, entry_price)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    trade.action, trade.size, trade.stopLoss, trade.takeProfit,
+    trade.pair, trade.action, trade.size, trade.stopLoss, trade.takeProfit,
     trade.confidence, trade.reasoning, trade.paper ? 1 : 0,
     trade.orderId ?? null, trade.pnl ?? null, trade.entryPrice ?? null
   );
 }
 
-export function getRecentTrades(limit = 5): TradeRecord[] {
+export function getRecentTrades(limit = 5, pair?: string): TradeRecord[] {
+  if (pair) {
+    return getDb().prepare(`
+      SELECT pair, action, size, stop_loss as stopLoss, take_profit as takeProfit,
+             confidence, reasoning, paper, order_id as orderId, pnl
+      FROM trades WHERE pair = ? ORDER BY id DESC LIMIT ?
+    `).all(pair, limit) as unknown as TradeRecord[];
+  }
   return getDb().prepare(`
-    SELECT action, size, stop_loss as stopLoss, take_profit as takeProfit,
+    SELECT pair, action, size, stop_loss as stopLoss, take_profit as takeProfit,
            confidence, reasoning, paper, order_id as orderId, pnl
     FROM trades ORDER BY id DESC LIMIT ?
   `).all(limit) as unknown as TradeRecord[];
@@ -105,6 +124,7 @@ export function setSetting(key: string, value: string): void {
 
 export interface OpenPaperTrade {
   id: number;
+  pair: string;
   action: string;
   size: number;
   stop_loss: number;
@@ -113,9 +133,15 @@ export interface OpenPaperTrade {
   created_at: string;
 }
 
-export function getOpenPaperTrades(): OpenPaperTrade[] {
+export function getOpenPaperTrades(pair?: string): OpenPaperTrade[] {
+  if (pair) {
+    return getDb().prepare(`
+      SELECT id, pair, action, size, stop_loss, take_profit, entry_price, created_at
+      FROM trades WHERE pair = ? AND paper = 1 AND pnl IS NULL
+    `).all(pair) as unknown as OpenPaperTrade[];
+  }
   return getDb().prepare(`
-    SELECT id, action, size, stop_loss, take_profit, entry_price, created_at
+    SELECT id, pair, action, size, stop_loss, take_profit, entry_price, created_at
     FROM trades WHERE paper = 1 AND pnl IS NULL
   `).all() as unknown as OpenPaperTrade[];
 }

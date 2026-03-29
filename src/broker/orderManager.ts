@@ -58,6 +58,7 @@ export async function executeDecision(decision: ClaudeDecision, context: Trading
 
   if (paperMode) {
     saveTradeRecord({
+      pair: context.pair,
       action: decision.action,
       size,
       stopLoss,
@@ -78,6 +79,7 @@ export async function executeDecision(decision: ClaudeDecision, context: Trading
   );
 
   saveTradeRecord({
+    pair: context.pair,
     action: decision.action,
     size,
     stopLoss,

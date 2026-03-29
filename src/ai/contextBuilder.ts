@@ -96,10 +96,10 @@ function assertIndicators(ind: Indicators, label: string): void {
   }
 }
 
-export async function buildContext(): Promise<TradingContext> {
-  const candles15 = getCandles(200, '15');
-  const candles60 = getCandles(200, '60');
-  const candles240 = getCandles(200, '240');
+export async function buildContext(pair: string): Promise<TradingContext> {
+  const candles15  = getCandles(200, pair, '15');
+  const candles60  = getCandles(200, pair, '60');
+  const candles240 = getCandles(200, pair, '240');
 
   const [ind15, ind60, ind240, position, balance] = await Promise.all([
     fetchIndicators(candles15),
@@ -109,15 +109,15 @@ export async function buildContext(): Promise<TradingContext> {
     getBalance(),
   ]);
 
-  assertIndicators(ind15, 'M15');
-  assertIndicators(ind60, 'H1');
+  assertIndicators(ind15,  'M15');
+  assertIndicators(ind60,  'H1');
   assertIndicators(ind240, 'H4');
 
-  const lastCandle = getLastCandle('15');
+  const lastCandle = getLastCandle(pair, '15');
   const currentPrice = lastCandle?.close ?? 0;
 
-  const tf15 = buildTimeframeData(ind15, currentPrice);
-  const tf60 = buildTimeframeData(ind60, currentPrice);
+  const tf15  = buildTimeframeData(ind15,  currentPrice);
+  const tf60  = buildTimeframeData(ind60,  currentPrice);
   const tf240 = buildTimeframeData(ind240, currentPrice);
 
   // Use actual last candle volume for M15 (most recent)
@@ -134,21 +134,21 @@ export async function buildContext(): Promise<TradingContext> {
     timeframe_alignment = 'mixed';
   }
 
-  const recentTrades = getRecentTrades(5);
+  const recentTrades = getRecentTrades(5, pair);
   const now = new Date();
 
   return {
-    pair: process.env.TRADING_PAIR ?? 'BTCUSDT',
+    pair,
     currentPrice,
     m15: tf15,
-    h1: tf60,
-    h4: tf240,
+    h1:  tf60,
+    h4:  tf240,
     timeframe_alignment,
     position,
     balance,
     recentTrades,
-    timestamp: now.toISOString(),
-    dayOfWeek: now.toLocaleDateString('en-US', { weekday: 'long' }),
-    hour: now.getUTCHours(),
+    timestamp:  now.toISOString(),
+    dayOfWeek:  now.toLocaleDateString('en-US', { weekday: 'long' }),
+    hour:       now.getUTCHours(),
   };
 }

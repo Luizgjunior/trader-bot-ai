@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { connectWebSocket } from './websocket';
-import { fetchAndLoadHistoricalCandles, isStoreReady } from './candleStore';
+import { PAIRS, fetchAndLoadHistoricalCandles, isStoreReady } from './candleStore';
 import { initDb, getSetting, setSetting, getOpenPaperTrades, closePaperTrade, getDailyStats } from '../database/db';
 import { buildContext, type TradingContext } from '../ai/contextBuilder';
 import { askClaude } from '../ai/claude';
@@ -10,7 +10,6 @@ import { checkTrailingStop } from '../risk/trailingStop';
 import { executeDecision } from '../broker/orderManager';
 import { sendTelegram, formatAnalise, formatEntrada, formatFechamento } from '../notifications/telegram';
 
-const PAIR = process.env.TRADING_PAIR ?? 'BTCUSDT';
 const TESTNET = process.env.BYBIT_TESTNET === 'true';
 
 // Blocked hours (UTC) — low-liquidity periods to avoid trading
@@ -21,19 +20,29 @@ const BLOCKED_HOURS: Set<number> = BLOCKED_HOURS_RAW
   : new Set();
 
 // ── Proteção de créditos ────────────────────────────────────────────────────
-// Evita chamar a API Claude desnecessariamente
 const HOLD_CIRCUIT_THRESHOLD = 3;   // HOLDs consecutivos para acionar o circuito
 const HOLD_CIRCUIT_SKIP = 4;        // candles M15 a pular após o circuito (= 1h)
 
-let isProcessing = false;
-let consecutiveHolds = 0;
-let candleCount = 0;
-let skipUntilCandle = 0;
+interface PairState {
+  isProcessing: boolean;
+  consecutiveHolds: number;
+  candleCount: number;
+  skipUntilCandle: number;
+}
+
+const pairState = new Map<string, PairState>();
+
+function getState(pair: string): PairState {
+  if (!pairState.has(pair)) {
+    pairState.set(pair, { isProcessing: false, consecutiveHolds: 0, candleCount: 0, skipUntilCandle: 0 });
+  }
+  return pairState.get(pair)!;
+}
 // ───────────────────────────────────────────────────────────────────────────
 
 
-async function checkPaperClosures(currentPrice: number): Promise<void> {
-  const open = getOpenPaperTrades();
+async function checkPaperClosures(pair: string, currentPrice: number): Promise<void> {
+  const open = getOpenPaperTrades(pair);
   for (const trade of open) {
     const isBuy = trade.action === 'BUY';
     const hitTP = isBuy ? currentPrice >= trade.take_profit : currentPrice <= trade.take_profit;
@@ -50,43 +59,45 @@ async function checkPaperClosures(currentPrice: number): Promise<void> {
     closePaperTrade(trade.id, pnl);
 
     const icone = hitTP ? '✅ TP' : '🛑 SL';
-    await sendTelegram(formatFechamento(trade, exitPrice, pnl, hitTP, PAIR, TESTNET));
-    console.log(`[Paper] Trade #${trade.id} fechado — ${icone} | PnL: ${pnl.toFixed(4)}`);
+    await sendTelegram(formatFechamento(trade, exitPrice, pnl, hitTP, pair, TESTNET));
+    console.log(`[Paper] ${pair} Trade #${trade.id} fechado — ${icone} | PnL: ${pnl.toFixed(4)}`);
   }
 }
 
-async function onCandleClose(): Promise<void> {
-  if (isProcessing) return;
-  if (!isStoreReady(50)) {
-    console.log('[Loop] Aguardando 50 candles...');
+async function onCandleClose(pair: string): Promise<void> {
+  const state = getState(pair);
+
+  if (state.isProcessing) return;
+  if (!isStoreReady(50, pair)) {
+    console.log(`[Loop] ${pair} Aguardando 50 candles...`);
     return;
   }
 
-  candleCount++;
+  state.candleCount++;
 
   // ── Circuit breaker: pausa após N HOLDs consecutivos ──────────────────
-  if (candleCount < skipUntilCandle) {
-    const restantes = skipUntilCandle - candleCount;
-    console.log(`[Loop] Circuito aberto — pulando Claude (${restantes} candle(s) restante(s))`);
+  if (state.candleCount < state.skipUntilCandle) {
+    const restantes = state.skipUntilCandle - state.candleCount;
+    console.log(`[Loop] ${pair} Circuito aberto — pulando Claude (${restantes} candle(s) restante(s))`);
     return;
   }
 
-  isProcessing = true;
+  state.isProcessing = true;
 
   try {
-    const context = await buildContext();
+    const context = await buildContext(pair);
 
     await maybeSendDailySummary(context);
     await maybeAlertInactivity();
 
     // ── Monitoramento de posições abertas (roda todo ciclo) ──────────────
-    await checkPaperClosures(context.currentPrice);
-    for (const trade of getOpenPaperTrades()) {
+    await checkPaperClosures(pair, context.currentPrice);
+    for (const trade of getOpenPaperTrades(pair)) {
       const update = checkTrailingStop(trade, context.currentPrice);
       if (update) {
-        console.log(`[Trailing] Trade #${trade.id} — ${update}`);
+        console.log(`[Trailing] ${pair} Trade #${trade.id} — ${update}`);
         const acaoPt = trade.action === 'BUY' ? 'COMPRA' : 'VENDA';
-        await sendTelegram(`🔄 *Trailing Stop* #${trade.id} (${acaoPt})\n${update}`);
+        await sendTelegram(`🔄 *Trailing Stop* ${pair} #${trade.id} (${acaoPt})\n${update}`);
       }
     }
 
@@ -99,23 +110,23 @@ async function onCandleClose(): Promise<void> {
     // ── Pré-filtro: timeframes desalinhados ──────────────────────────────
     if (context.timeframe_alignment === 'mixed') {
       logCycle(context, 'cancelado (mixed)');
-      consecutiveHolds++;
-      _checkCircuit();
+      state.consecutiveHolds++;
+      _checkCircuit(pair, state);
       return;
     }
 
     if (context.h4.ema_trend === 'neutral') {
       logCycle(context, 'cancelado (H4 neutro)');
-      consecutiveHolds++;
-      _checkCircuit();
+      state.consecutiveHolds++;
+      _checkCircuit(pair, state);
       return;
     }
 
     // ── Filtro ADX: evita mercados laterais ──────────────────────────────
     if (context.h4.adx_strength === 'no_trend') {
       logCycle(context, `cancelado (ADX fraco ${context.h4.adx.toFixed(1)})`);
-      consecutiveHolds++;
-      _checkCircuit();
+      state.consecutiveHolds++;
+      _checkCircuit(pair, state);
       return;
     }
 
@@ -131,20 +142,20 @@ async function onCandleClose(): Promise<void> {
     const rawResponse = await askClaude(context);
     const decision = parseClaudeResponse(rawResponse);
 
-    console.log(`[Loop] Decisão Claude: ${decision.action} (confiança: ${decision.confidence})`);
-    await sendTelegram(formatAnalise(decision, context, PAIR));
+    console.log(`[Loop] ${pair} Decisão Claude: ${decision.action} (confiança: ${decision.confidence})`);
+    await sendTelegram(formatAnalise(decision, context, pair));
 
     if (decision.action === 'HOLD') {
-      consecutiveHolds++;
-      _checkCircuit();
+      state.consecutiveHolds++;
+      _checkCircuit(pair, state);
     } else {
-      consecutiveHolds = 0;
+      state.consecutiveHolds = 0;
     }
 
     const riskCheck = await checkRisk(decision);
 
     if (!riskCheck.allowed) {
-      console.warn(`[Loop] Operação bloqueada pelo gerenciador de risco: ${riskCheck.reason}`);
+      console.warn(`[Loop] ${pair} Operação bloqueada pelo gerenciador de risco: ${riskCheck.reason}`);
       return;
     }
 
@@ -152,22 +163,22 @@ async function onCandleClose(): Promise<void> {
 
     if (result.executed) {
       setSetting('last_activity_ts', String(Date.now()));
-      await sendTelegram(formatEntrada(decision, context, result, PAIR, TESTNET));
+      await sendTelegram(formatEntrada(decision, context, result, pair, TESTNET));
     }
   } catch (err) {
-    console.error('[Loop] Erro no ciclo:', err);
-    await sendTelegram(`⚠️ Erro no bot: ${(err as Error).message}`);
+    console.error(`[Loop] ${pair} Erro no ciclo:`, err);
+    await sendTelegram(`⚠️ Erro no bot (${pair}): ${(err as Error).message}`);
   } finally {
-    isProcessing = false;
+    state.isProcessing = false;
   }
 }
 
-function _checkCircuit(): void {
-  if (consecutiveHolds >= HOLD_CIRCUIT_THRESHOLD) {
-    skipUntilCandle = candleCount + HOLD_CIRCUIT_SKIP;
-    consecutiveHolds = 0;
-    const msg = `⏸ *Circuit breaker ativado* — ${HOLD_CIRCUIT_THRESHOLD} HOLDs seguidos\nClaude pausado por ${HOLD_CIRCUIT_SKIP} candles M15 (~${HOLD_CIRCUIT_SKIP * 15}min)`;
-    console.log(`[Loop] ${HOLD_CIRCUIT_THRESHOLD} HOLDs seguidos — pausando Claude por ${HOLD_CIRCUIT_SKIP} candles M15 (~${HOLD_CIRCUIT_SKIP * 15}min)`);
+function _checkCircuit(pair: string, state: PairState): void {
+  if (state.consecutiveHolds >= HOLD_CIRCUIT_THRESHOLD) {
+    state.skipUntilCandle = state.candleCount + HOLD_CIRCUIT_SKIP;
+    state.consecutiveHolds = 0;
+    const msg = `⏸ *Circuit breaker ativado* (${pair}) — ${HOLD_CIRCUIT_THRESHOLD} HOLDs seguidos\nClaude pausado por ${HOLD_CIRCUIT_SKIP} candles M15 (~${HOLD_CIRCUIT_SKIP * 15}min)`;
+    console.log(`[Loop] ${pair} ${HOLD_CIRCUIT_THRESHOLD} HOLDs seguidos — pausando Claude por ${HOLD_CIRCUIT_SKIP} candles M15 (~${HOLD_CIRCUIT_SKIP * 15}min)`);
     sendTelegram(msg).catch(() => {});
   }
 }
@@ -179,7 +190,7 @@ function nowUTC(): string {
 
 function logCycle(context: TradingContext, outcome: string): void {
   const mtf = context.timeframe_alignment === 'mixed' ? 'mixed' : context.timeframe_alignment;
-  console.log(`[Loop] ${nowUTC()} UTC | MTF: ${mtf} | ADX: ${context.h4.adx.toFixed(1)} | Vol: ${context.m15.volume_vs_avg} | → ${outcome}`);
+  console.log(`[Loop] ${nowUTC()} UTC | ${context.pair} | MTF: ${mtf} | ADX: ${context.h4.adx.toFixed(1)} | Vol: ${context.m15.volume_vs_avg} | → ${outcome}`);
 }
 
 async function maybeAlertInactivity(): Promise<void> {
@@ -187,7 +198,7 @@ async function maybeAlertInactivity(): Promise<void> {
   const lastTs = getSetting('last_activity_ts');
   if (!lastTs) return;
   if (Date.now() - Number(lastTs) < TWENTY_FOUR_HOURS) return;
-  setSetting('last_activity_ts', String(Date.now())); // reset antes de enviar para não repetir
+  setSetting('last_activity_ts', String(Date.now()));
   await sendTelegram(
     '⚠️ Bot ativo há 24h sem trades. Filtros muito restritivos ou mercado lateral prolongado.'
   );
@@ -210,22 +221,23 @@ async function maybeSendDailySummary(context: TradingContext): Promise<void> {
 
 async function main(): Promise<void> {
   console.log('=== tradebot-ai iniciando ===');
-  console.log(`Par: ${PAIR} | Timeframes: M15, H1, H4 | Testnet: ${TESTNET}`);
+  console.log(`Pares: ${PAIRS.join(', ')} | Timeframes: M15, H1, H4 | Testnet: ${TESTNET}`);
 
   initDb();
 
   const openAtStart = getOpenPaperTrades();
   if (openAtStart.length > 0) {
-    console.log(`[Loop] Posição paper anterior detectada — monitorando SL/TP (${openAtStart.length} trade(s) aberto(s))`);
+    console.log(`[Loop] Posições paper anteriores detectadas — monitorando SL/TP (${openAtStart.length} trade(s) aberto(s))`);
   }
 
-  await fetchAndLoadHistoricalCandles(PAIR, TESTNET);
+  for (const pair of PAIRS) {
+    await fetchAndLoadHistoricalCandles(pair, TESTNET);
+  }
 
   const FIVE_MINUTES = 5 * 60 * 1000;
   const lastStarted = getSetting('last_started_ts');
   const now = Date.now();
 
-  // Inicializa janela de inatividade na primeira execução
   if (!getSetting('last_activity_ts')) {
     setSetting('last_activity_ts', String(now));
   }
@@ -234,15 +246,15 @@ async function main(): Promise<void> {
     const modo = TESTNET ? '🧪 Testnet (paper)' : '💰 Mainnet (real)';
     await sendTelegram(
       `🤖 *tradebot-ai iniciado*\n` +
-      `Par: ${PAIR} | TF: M15/H1/H4\n` +
-      `Modo: ${modo}\n` +
+      `Pares: ${PAIRS.join(', ')}\n` +
+      `TF: M15/H1/H4 | Modo: ${modo}\n` +
       `Proteção: pré-filtro MTF + ADX + volume + circuit breaker ativo`
     );
   } else {
     console.log('[Loop] Notificação de início suprimida (enviada há menos de 5min)');
   }
 
-  connectWebSocket(PAIR, TESTNET, onCandleClose);
+  connectWebSocket(PAIRS, TESTNET, onCandleClose);
 }
 
 main().catch((err) => {
