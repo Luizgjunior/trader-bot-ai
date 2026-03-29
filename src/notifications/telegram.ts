@@ -117,6 +117,30 @@ export function formatEntrada(
 /**
  * Evento 3 — Fechamento de posição (TP ou SL atingido)
  */
+/**
+ * Evento 0 — Resumo consolidado multi-par (uma mensagem por ciclo M15)
+ */
+export function formatResumoMultiPar(
+  resultados: Array<{
+    pair: string;
+    action: string;
+    confidence: number;
+    reasoning: string;
+    blocked?: string;
+  }>
+): string {
+  const linhas = resultados.map(r => {
+    const emoji = r.action === 'BUY' ? '📈' : r.action === 'SELL' ? '📉' : '⏸';
+    const conf = r.action !== 'HOLD' && !r.blocked
+      ? ` ${(r.confidence * 100).toFixed(0)}%`
+      : '';
+    const motivo = r.blocked ?? (r.action === 'HOLD' ? 'aguardando setup' : r.reasoning);
+    return `${emoji} *${r.pair}*${conf} — ${motivo}`;
+  });
+  const timestamp = new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
+  return `🕐 *Análise ${timestamp}*\n\n` + linhas.join('\n');
+}
+
 export function formatFechamento(
   trade: OpenPaperTrade,
   exitPrice: number,

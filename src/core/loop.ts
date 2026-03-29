@@ -8,20 +8,19 @@ import { parseClaudeResponse } from '../ai/parser';
 import { checkRisk } from '../risk/sizer';
 import { checkTrailingStop } from '../risk/trailingStop';
 import { executeDecision } from '../broker/orderManager';
-import { sendTelegram, formatAnalise, formatEntrada, formatFechamento } from '../notifications/telegram';
+import { sendTelegram, formatResumoMultiPar, formatEntrada, formatFechamento } from '../notifications/telegram';
 
 const TESTNET = process.env.BYBIT_TESTNET === 'true';
 
 // Blocked hours (UTC) — low-liquidity periods to avoid trading
-// Format: comma-separated hours e.g. "0,1,2,3,4" or leave empty to disable
 const BLOCKED_HOURS_RAW = process.env.BLOCKED_HOURS ?? '';
 const BLOCKED_HOURS: Set<number> = BLOCKED_HOURS_RAW
   ? new Set(BLOCKED_HOURS_RAW.split(',').map(h => parseInt(h.trim(), 10)))
   : new Set();
 
 // ── Proteção de créditos ────────────────────────────────────────────────────
-const HOLD_CIRCUIT_THRESHOLD = 3;   // HOLDs consecutivos para acionar o circuito
-const HOLD_CIRCUIT_SKIP = 4;        // candles M15 a pular após o circuito (= 1h)
+const HOLD_CIRCUIT_THRESHOLD = 3;
+const HOLD_CIRCUIT_SKIP = 4;
 
 interface PairState {
   isProcessing: boolean;
@@ -38,6 +37,19 @@ function getState(pair: string): PairState {
   }
   return pairState.get(pair)!;
 }
+
+// ── Acumulação de resultados por ciclo M15 ──────────────────────────────────
+interface CycleResult {
+  pair: string;
+  action: string;
+  confidence: number;
+  reasoning: string;
+  blocked?: string;
+}
+
+let globalCandleCount = 0;
+const cycleResults = new Map<number, CycleResult[]>();
+const cycleContributors = new Set<string>();
 // ───────────────────────────────────────────────────────────────────────────
 
 
@@ -65,25 +77,47 @@ async function checkPaperClosures(pair: string, currentPrice: number): Promise<v
 }
 
 async function onCandleClose(pair: string): Promise<void> {
+  // ── Determina chave do ciclo ─────────────────────────────────────────────
+  if (!cycleContributors.has(pair)) {
+    if (cycleContributors.size === 0) globalCandleCount++;
+    cycleContributors.add(pair);
+  }
+  const cycleKey = globalCandleCount;
+
+  async function addResult(result: CycleResult): Promise<void> {
+    let bucket = cycleResults.get(cycleKey);
+    if (!bucket) { bucket = []; cycleResults.set(cycleKey, bucket); }
+    if (!bucket.find(r => r.pair === pair)) bucket.push(result);
+    if (bucket.length === PAIRS.length) {
+      cycleContributors.clear();
+      cycleResults.delete(cycleKey);
+      await sendTelegram(formatResumoMultiPar(bucket));
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   const state = getState(pair);
 
-  if (state.isProcessing) return;
+  if (state.isProcessing) {
+    await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: '', blocked: 'processando' });
+    return;
+  }
   if (!isStoreReady(50, pair)) {
     console.log(`[Loop] ${pair} Aguardando 50 candles...`);
+    await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: '', blocked: 'inicializando' });
     return;
   }
 
   state.candleCount++;
 
-  // ── Circuit breaker: pausa após N HOLDs consecutivos ──────────────────
   if (state.candleCount < state.skipUntilCandle) {
     const restantes = state.skipUntilCandle - state.candleCount;
     console.log(`[Loop] ${pair} Circuito aberto — pulando Claude (${restantes} candle(s) restante(s))`);
+    await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: '', blocked: `circuit (${restantes}c)` });
     return;
   }
 
   state.isProcessing = true;
-
   try {
     const context = await buildContext(pair);
 
@@ -104,6 +138,7 @@ async function onCandleClose(pair: string): Promise<void> {
     // ── Filtro: hora bloqueada (baixa liquidez) ──────────────────────────
     if (BLOCKED_HOURS.has(context.hour)) {
       logCycle(context, `bloqueado (${context.hour}h UTC)`);
+      await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: '', blocked: `bloqueado ${context.hour}h UTC` });
       return;
     }
 
@@ -112,6 +147,7 @@ async function onCandleClose(pair: string): Promise<void> {
       logCycle(context, 'cancelado (mixed)');
       state.consecutiveHolds++;
       _checkCircuit(pair, state);
+      await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: '', blocked: 'mixed MTF' });
       return;
     }
 
@@ -119,6 +155,7 @@ async function onCandleClose(pair: string): Promise<void> {
       logCycle(context, 'cancelado (H4 neutro)');
       state.consecutiveHolds++;
       _checkCircuit(pair, state);
+      await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: '', blocked: 'H4 neutro' });
       return;
     }
 
@@ -127,23 +164,22 @@ async function onCandleClose(pair: string): Promise<void> {
       logCycle(context, `cancelado (ADX fraco ${context.h4.adx.toFixed(1)})`);
       state.consecutiveHolds++;
       _checkCircuit(pair, state);
+      await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: '', blocked: `ADX fraco (${context.h4.adx.toFixed(1)})` });
       return;
     }
 
     // ── Filtro Volume: evita candles sem liquidez ─────────────────────────
     if (context.m15.volume_vs_avg === 'low') {
       logCycle(context, 'aguardando liquidez');
+      await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: '', blocked: 'volume baixo' });
       return;
     }
     // ────────────────────────────────────────────────────────────────────
 
     logCycle(context, 'Claude chamado');
-
     const rawResponse = await askClaude(context);
     const decision = parseClaudeResponse(rawResponse);
-
     console.log(`[Loop] ${pair} Decisão Claude: ${decision.action} (confiança: ${decision.confidence})`);
-    await sendTelegram(formatAnalise(decision, context, pair));
 
     if (decision.action === 'HOLD') {
       state.consecutiveHolds++;
@@ -153,21 +189,23 @@ async function onCandleClose(pair: string): Promise<void> {
     }
 
     const riskCheck = await checkRisk(decision);
-
     if (!riskCheck.allowed) {
       console.warn(`[Loop] ${pair} Operação bloqueada pelo gerenciador de risco: ${riskCheck.reason}`);
+      await addResult({ pair, action: decision.action, confidence: decision.confidence, reasoning: decision.reasoning, blocked: `risco: ${riskCheck.reason}` });
       return;
     }
 
     const result = await executeDecision(decision, context);
-
     if (result.executed) {
       setSetting('last_activity_ts', String(Date.now()));
       await sendTelegram(formatEntrada(decision, context, result, pair, TESTNET));
     }
+
+    await addResult({ pair, action: decision.action, confidence: decision.confidence, reasoning: decision.reasoning });
   } catch (err) {
     console.error(`[Loop] ${pair} Erro no ciclo:`, err);
     await sendTelegram(`⚠️ Erro no bot (${pair}): ${(err as Error).message}`);
+    await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: (err as Error).message, blocked: 'erro' });
   } finally {
     state.isProcessing = false;
   }
