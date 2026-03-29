@@ -138,7 +138,14 @@ export function formatResumoMultiPar(
     return `${emoji} *${r.pair}*${conf} — ${motivo}`;
   });
   const timestamp = new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
-  return `🕐 *Análise ${timestamp}*\n\n` + linhas.join('\n');
+  const legenda =
+    `\n\n_📖 Legenda:_\n` +
+    `_⏸ = sem entrada no momento_\n` +
+    `_mixed MTF = tendências divergentes entre M15/H1/H4_\n` +
+    `_volume baixo = liquidez insuficiente para entrar_\n` +
+    `_risco: HOLD = sinal fraco ou mercado instável_\n` +
+    `_📈/📉 = ordem executada (compra/venda)_`;
+  return `🕐 *Análise ${timestamp}*\n\n` + linhas.join('\n') + legenda;
 }
 
 export function formatFechamento(
