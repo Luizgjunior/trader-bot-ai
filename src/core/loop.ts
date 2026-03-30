@@ -67,8 +67,9 @@ async function checkPaperClosures(pair: string, currentPrice: number): Promise<v
     const pnl = isBuy
       ? (exitPrice - entry) * trade.size
       : (entry - exitPrice) * trade.size;
+    const reason: 'TP' | 'SL' = hitTP ? 'TP' : 'SL';
 
-    closePaperTrade(trade.id, pnl);
+    closePaperTrade(trade.id, pnl, exitPrice, reason);
 
     const icone = hitTP ? '✅ TP' : '🛑 SL';
     await sendTelegram(formatFechamento(trade, exitPrice, pnl, hitTP, pair, TESTNET));
@@ -137,8 +138,14 @@ async function onCandleClose(pair: string): Promise<void> {
 
     // ── Filtro: hora bloqueada (baixa liquidez) ──────────────────────────
     if (BLOCKED_HOURS.has(context.hour)) {
-      logCycle(context, `bloqueado (${context.hour}h UTC)`);
-      await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: '', blocked: `bloqueado ${context.hour}h UTC` });
+      // Descobre a próxima hora desbloqueada para mostrar no log
+      let nextHour = context.hour;
+      for (let i = 1; i <= 24; i++) {
+        const candidate = (context.hour + i) % 24;
+        if (!BLOCKED_HOURS.has(candidate)) { nextHour = candidate; break; }
+      }
+      logCycle(context, `pausado — hora bloqueada (${context.hour}h UTC, retoma às ${nextHour}h UTC)`);
+      await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: '', blocked: `pausado ${context.hour}h UTC` });
       return;
     }
 

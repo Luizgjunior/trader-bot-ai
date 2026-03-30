@@ -64,6 +64,9 @@ export function initDb(): void {
   // Migrations para DBs antigos
   try { db.exec('ALTER TABLE trades ADD COLUMN entry_price REAL'); } catch {}
   try { db.exec("ALTER TABLE trades ADD COLUMN pair TEXT NOT NULL DEFAULT 'BTCUSDT'"); } catch {}
+  try { db.exec('ALTER TABLE trades ADD COLUMN closed_at TEXT'); } catch {}
+  try { db.exec('ALTER TABLE trades ADD COLUMN close_reason TEXT'); } catch {}
+  try { db.exec('ALTER TABLE trades ADD COLUMN exit_price REAL'); } catch {}
 
   console.log(`[DB] Initialized at ${DB_PATH}`);
 }
@@ -146,8 +149,11 @@ export function getOpenPaperTrades(pair?: string): OpenPaperTrade[] {
   `).all() as unknown as OpenPaperTrade[];
 }
 
-export function closePaperTrade(id: number, pnl: number): void {
-  getDb().prepare(`UPDATE trades SET pnl = ? WHERE id = ?`).run(pnl, id);
+export function closePaperTrade(id: number, pnl: number, exitPrice: number, reason: 'TP' | 'SL'): void {
+  getDb().prepare(`
+    UPDATE trades SET pnl = ?, exit_price = ?, close_reason = ?, closed_at = datetime('now')
+    WHERE id = ?
+  `).run(pnl, exitPrice, reason, id);
 }
 
 export function getDailyPnl(): number {

@@ -89,6 +89,8 @@ function handleMessage(raw: string): void {
     const tf = parts[1] as Timeframe;
     const pair = parts[2];
 
+    if (!pair || !tf) return; // ignora mensagens com topic malformado
+
     for (const kline of msg.data) {
       if (!kline.confirm) continue; // only closed candles
 

@@ -19,12 +19,15 @@ try { db.exec('ALTER TABLE trades ADD COLUMN entry_price REAL'); } catch {}
 interface TradeRow {
   id: number;
   created_at: string;
+  closed_at: string | null;
   pair: string;
   action: string;
   size: number;
   stop_loss: number;
   take_profit: number;
   entry_price: number | null;
+  exit_price: number | null;
+  close_reason: string | null;
   confidence: number;
   reasoning: string;
   paper: number;
@@ -32,16 +35,21 @@ interface TradeRow {
   pnl: number | null;
 }
 
+// Add new columns if DB is old
+try { db.exec('ALTER TABLE trades ADD COLUMN closed_at TEXT'); } catch {}
+try { db.exec('ALTER TABLE trades ADD COLUMN close_reason TEXT'); } catch {}
+try { db.exec('ALTER TABLE trades ADD COLUMN exit_price REAL'); } catch {}
+
 const trades = db.prepare(`
-  SELECT id, created_at, pair, action, size, stop_loss, take_profit, entry_price,
-         confidence, reasoning, paper, order_id, pnl
+  SELECT id, created_at, closed_at, pair, action, size, stop_loss, take_profit, entry_price,
+         exit_price, close_reason, confidence, reasoning, paper, order_id, pnl
   FROM trades
   ORDER BY id ASC
 `).all() as unknown as TradeRow[];
 
 const closedTrades = trades.filter(t => t.pnl !== null);
 const openTrades = trades.filter(t => t.pnl === null);
-const today = new Date().toISOString().slice(0, 10);
+const today = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD no fuso local
 const todayTrades = closedTrades.filter(t => t.created_at.startsWith(today));
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -111,7 +119,7 @@ console.log('╚═════════════════════�
 console.log(`  Gerado em: ${new Date().toLocaleString('pt-BR')}`);
 console.log(`  Modo: ${trades[0]?.paper ? 'PAPER TRADING' : 'LIVE'} | DB: ${DB_PATH}`);
 
-section('ENTRADAS ABERTAS (aguardando fechamento)');
+section('📭 POSIÇÕES ABERTAS (aguardando TP ou SL)');
 if (openTrades.length === 0) {
   console.log('  Nenhuma posição aberta no momento.');
 } else {
@@ -119,14 +127,14 @@ if (openTrades.length === 0) {
     const tipo = t.action === 'BUY' ? '📈 COMPRA' : '📉 VENDA';
     const conf = (t.confidence * 100).toFixed(0) + '%';
     const date = t.created_at.slice(0, 16).replace('T', ' ');
-    const entryStr = t.entry_price ? `$${t.entry_price.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'N/A';
-    console.log(`\n  ${tipo} | Par: ${t.pair} | Aberta em: ${date} | Confiança: ${conf}`);
-    console.log(`  Preço Entrada: ${entryStr}`);
-    console.log(`  Stop Loss    : $${t.stop_loss.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
-    console.log(`  Take Profit  : $${t.take_profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
-    console.log(`  Tamanho      : ${t.size}`);
+    const entryStr = t.entry_price ? `$${t.entry_price.toFixed(2)}` : 'N/A';
+    console.log(`\n  ${tipo} ${t.pair} — aberta em ${date} | confiança ${conf}`);
+    console.log(`  Entrada : ${entryStr}`);
+    console.log(`  Stop Loss  : $${t.stop_loss.toFixed(2)}  ← preço que FECHA com PERDA`);
+    console.log(`  Take Profit: $${t.take_profit.toFixed(2)}  ← preço que FECHA com LUCRO`);
+    console.log(`  Tamanho : ${t.size}`);
     if (t.reasoning) {
-      console.log(`  Motivo     : ${t.reasoning.slice(0, 80)}${t.reasoning.length > 80 ? '…' : ''}`);
+      console.log(`  Motivo  : ${t.reasoning.slice(0, 100)}${t.reasoning.length > 100 ? '…' : ''}`);
     }
   }
 }
@@ -223,39 +231,28 @@ for (const [lo, hi, label] of tiers) {
 }
 if (!hasAnyTier) console.log('  Nenhum trade com confiança no intervalo analisado.');
 
-section('ÚLTIMAS 10 OPERAÇÕES');
+section('📋 ÚLTIMAS 10 OPERAÇÕES FECHADAS');
 {
-  const hdr = [
-    'Data/Hora'.padEnd(16),
-    'Par'.padEnd(10),
-    'Ação'.padEnd(4),
-    'Entry'.padStart(10),
-    'SL'.padStart(10),
-    'TP'.padStart(10),
-    'PnL'.padStart(12),
-    'Resultado',
-  ].join('  ');
-  console.log(`  ${hdr}`);
-  console.log('  ' + '─'.repeat(hdr.length));
   const last10 = closedTrades.slice(-10).reverse();
-  for (const t of last10) {
-    const date = t.created_at.slice(0, 16).replace('T', ' ');
-    const entry = t.entry_price ? `$${t.entry_price.toFixed(2)}` : 'N/A';
-    const sl = `$${t.stop_loss.toFixed(2)}`;
-    const tp = `$${t.take_profit.toFixed(2)}`;
-    const pnlStr = t.pnl !== null ? usd(t.pnl) : '—';
-    const resultado = (t.pnl ?? 0) > 0 ? '✅ WIN' : (t.pnl ?? 0) < 0 ? '❌ LOSS' : '⏸ EMPATE';
-    const row = [
-      date.padEnd(16),
-      t.pair.padEnd(10),
-      t.action.padEnd(4),
-      entry.padStart(10),
-      sl.padStart(10),
-      tp.padStart(10),
-      pnlStr.padStart(12),
-      resultado,
-    ].join('  ');
-    console.log(`  ${row}`);
+  if (last10.length === 0) {
+    console.log('  Sem operações fechadas ainda.');
+  } else {
+    for (const t of last10) {
+      const openDate = t.created_at.slice(0, 16).replace('T', ' ');
+      const closeDate = t.closed_at ? t.closed_at.slice(0, 16).replace('T', ' ') : '?';
+      const tipo = t.action === 'BUY' ? '📈 COMPRA' : '📉 VENDA';
+      const entry = t.entry_price ? `$${t.entry_price.toFixed(2)}` : 'N/A';
+      const exit = t.exit_price ? `$${t.exit_price.toFixed(2)}` : '?';
+      const pnlStr = t.pnl !== null ? usd(t.pnl) : '—';
+      const conf = (t.confidence * 100).toFixed(0) + '%';
+      // Determina o motivo do fechamento
+      const reason = t.close_reason ?? ((t.pnl ?? 0) >= 0 ? 'TP' : 'SL');
+      const resultado = reason === 'TP' ? '✅ LUCRO (TP)' : '❌ PERDA (SL)';
+      console.log(`\n  ${resultado} — ${tipo} ${t.pair} | conf: ${conf}`);
+      console.log(`  Abriu  : ${openDate} @ ${entry}`);
+      console.log(`  Fechou : ${closeDate} @ ${exit}  [${reason}]`);
+      console.log(`  Tamanho: ${t.size} | PnL: ${pnlStr}`);
+    }
   }
 }
 
@@ -305,21 +302,36 @@ async function sendReportToTelegram(): Promise<void> {
   let lastLine = 'Nenhuma operação fechada';
   if (lastTrade) {
     const date = lastTrade.created_at.slice(0, 16).replace('T', ' ');
+    const closeDate = lastTrade.closed_at ? lastTrade.closed_at.slice(0, 16).replace('T', ' ') : '?';
     const entry = lastTrade.entry_price ? `$${lastTrade.entry_price.toFixed(2)}` : 'N/A';
+    const exit = lastTrade.exit_price ? `$${lastTrade.exit_price.toFixed(2)}` : '?';
     const pnlVal = lastTrade.pnl ?? 0;
     const pnlStr = (pnlVal >= 0 ? '+' : '') + pnlVal.toFixed(2) + ' USDT';
-    const icon = pnlVal > 0 ? '✅' : pnlVal < 0 ? '❌' : '⏸';
-    lastLine = `${date} | ${lastTrade.pair} | ${lastTrade.action} | Entry: ${entry} | PnL: ${pnlStr} ${icon}`;
+    const reason = lastTrade.close_reason ?? (pnlVal >= 0 ? 'TP' : 'SL');
+    const icon = reason === 'TP' ? '✅ TP' : '❌ SL';
+    lastLine = `${icon} ${lastTrade.pair} ${lastTrade.action}\nAbertura: ${date} @ ${entry}\nFechamento: ${closeDate} @ ${exit}\nPnL: ${pnlStr}`;
   }
+
+  // Últimas 5 operações fechadas para Telegram
+  const last5Lines = closedTrades.slice(-5).reverse().map(t => {
+    const pnlVal = t.pnl ?? 0;
+    const reason = t.close_reason ?? (pnlVal >= 0 ? 'TP' : 'SL');
+    const icon = reason === 'TP' ? '✅' : '❌';
+    const date = t.created_at.slice(0, 16).replace('T', ' ');
+    const entry = t.entry_price ? `$${t.entry_price.toFixed(2)}` : 'N/A';
+    const exit = t.exit_price ? `→$${t.exit_price.toFixed(2)}` : '';
+    const pnlStr = (pnlVal >= 0 ? '+' : '') + pnlVal.toFixed(2);
+    return `${icon} ${t.pair} ${t.action} ${date} | ${entry}${exit} | ${reason} | ${pnlStr} USDT`;
+  }).join('\n') || 'Sem operações fechadas';
 
   const text = [
     `📊 *RELATÓRIO TRADEBOT-AI*`,
     `Multi-par (5 pares) | Modo: ${mode}`,
     ``,
     `*Geral*`,
-    `Total trades: ${trades.length} | Fechados: ${closedTrades.length} | Abertos: ${openTrades.length}`,
+    `Entradas: ${trades.length} | Fechadas: ${closedTrades.length} | Abertas: ${openTrades.length}`,
     `PnL Total: ${(totalPnl >= 0 ? '+' : '') + totalPnl.toFixed(2)} USDT`,
-    `Win Rate: ${(winRate * 100).toFixed(1)}% (${wins}W / ${losses}L)`,
+    `Win Rate: ${(winRate * 100).toFixed(1)}% (${wins} lucros / ${losses} perdas)`,
     `Profit Factor: ${pfStr}`,
     `Drawdown Máx: ${maxDD.toFixed(2)} USDT`,
     ``,
@@ -332,8 +344,9 @@ async function sendReportToTelegram(): Promise<void> {
     `*Por Confidence*`,
     tierLines,
     ``,
-    `*Última operação*`,
-    lastLine,
+    `*Últimas 5 operações*`,
+    `_✅=fechou no TP (lucro) | ❌=fechou no SL (perda)_`,
+    last5Lines,
   ].join('\n');
 
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
