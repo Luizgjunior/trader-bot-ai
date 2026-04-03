@@ -71,7 +71,7 @@ function volumeVsAvg(volume: number, volumeSma: number): 'high' | 'normal' | 'lo
   if (volumeSma === 0) return 'normal';
   const ratio = volume / volumeSma;
   if (ratio > 1.5) return 'high';
-  if (ratio < 0.7) return 'low';
+  if (ratio < 0.4) return 'low';  // era 0.7 — relaxado para gerar mais entradas
   return 'normal';
 }
 
@@ -138,10 +138,11 @@ export async function buildContext(pair: string): Promise<TradingContext> {
     tf15.volume_vs_avg = volumeVsAvg(lastCandle.volume, ind15.volumeSma);
   }
 
+  // Alinhamento relaxado: H1 + H4 precisam concordar (M15 pode divergir)
   let timeframe_alignment: 'bullish' | 'bearish' | 'mixed';
-  if (tf15.ema_trend === 'bullish' && tf60.ema_trend === 'bullish' && tf240.ema_trend === 'bullish') {
+  if (tf60.ema_trend === 'bullish' && tf240.ema_trend === 'bullish') {
     timeframe_alignment = 'bullish';
-  } else if (tf15.ema_trend === 'bearish' && tf60.ema_trend === 'bearish' && tf240.ema_trend === 'bearish') {
+  } else if (tf60.ema_trend === 'bearish' && tf240.ema_trend === 'bearish') {
     timeframe_alignment = 'bearish';
   } else {
     timeframe_alignment = 'mixed';
