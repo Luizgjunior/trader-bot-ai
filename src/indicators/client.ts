@@ -31,12 +31,19 @@ export async function fetchIndicators(candles: Candle[]): Promise<Indicators> {
     })),
   };
 
-  try {
-    const { data } = await axios.post<Indicators>(`${INDICATORS_URL}/indicators`, payload, {
-      timeout: 5000,
-    });
-    return data;
-  } catch {
-    throw new Error('Python indicators server unreachable — is it running?');
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const { data } = await axios.post<Indicators>(`${INDICATORS_URL}/indicators`, payload, {
+        timeout: 8000,
+      });
+      return data;
+    } catch {
+      if (attempt === MAX_RETRIES) {
+        throw new Error('Python indicators server unreachable — is it running?');
+      }
+      await new Promise(r => setTimeout(r, 1000 * attempt));
+    }
   }
+  throw new Error('Python indicators server unreachable — is it running?');
 }
