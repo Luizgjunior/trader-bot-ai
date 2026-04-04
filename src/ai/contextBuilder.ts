@@ -52,8 +52,8 @@ function macdState(macdHist: number): 'bullish' | 'bearish' | 'neutral' {
 function adxStrength(adx: number): 'strong_trend' | 'moderate_trend' | 'weak_trend' | 'no_trend' {
   if (adx >= 40) return 'strong_trend';
   if (adx >= 25) return 'moderate_trend';
-  if (adx >= 20) return 'weak_trend';
-  return 'no_trend';
+  if (adx >= 15) return 'weak_trend';
+  return 'no_trend';  // ADX < 15 (mercado realmente lateral)
 }
 
 function bbPosition(price: number, bbUpper: number, bbLower: number): 'above_upper' | 'near_upper' | 'middle' | 'near_lower' | 'below_lower' {

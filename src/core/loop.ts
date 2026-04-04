@@ -19,8 +19,8 @@ const BLOCKED_HOURS: Set<number> = BLOCKED_HOURS_RAW
   : new Set();
 
 // ── Proteção de créditos ────────────────────────────────────────────────────
-const HOLD_CIRCUIT_THRESHOLD = 3;
-const HOLD_CIRCUIT_SKIP = 4;
+const HOLD_CIRCUIT_THRESHOLD = 5;
+const HOLD_CIRCUIT_SKIP = 3;
 
 interface PairState {
   isProcessing: boolean;
@@ -158,20 +158,12 @@ async function onCandleClose(pair: string): Promise<void> {
       return;
     }
 
-    if (context.h4.ema_trend === 'neutral') {
-      logCycle(context, 'cancelado (H4 neutro)');
-      state.consecutiveHolds++;
-      _checkCircuit(pair, state);
-      await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: '', blocked: 'H4 neutro' });
-      return;
-    }
-
-    // ── Filtro ADX: evita mercados laterais ──────────────────────────────
+    // ── Filtro ADX: evita mercados realmente laterais (ADX < 15) ─────────
     if (context.h4.adx_strength === 'no_trend') {
-      logCycle(context, `cancelado (ADX fraco ${context.h4.adx.toFixed(1)})`);
+      logCycle(context, `cancelado (ADX muito fraco ${context.h4.adx.toFixed(1)})`);
       state.consecutiveHolds++;
       _checkCircuit(pair, state);
-      await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: '', blocked: `ADX fraco (${context.h4.adx.toFixed(1)})` });
+      await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: '', blocked: `ADX muito fraco (${context.h4.adx.toFixed(1)})` });
       return;
     }
 
