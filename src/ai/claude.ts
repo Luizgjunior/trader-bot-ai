@@ -1,9 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { TradingContext } from './contextBuilder';
+import { sendTelegram } from '../notifications/telegram';
 
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
+
+// Halts Claude calls when the API key is invalid (401) to avoid billing loop
+let claudeHalted = false;
 
 const SYSTEM_PROMPT = `Expert crypto trader. Analyze M15/H1/H4 semantic signals and return ONE valid JSON — no markdown, no text outside JSON.
 Format: {"action":"BUY"|"SELL"|"HOLD","confidence":<0.0-1.0>,"reasoning":"<1-2 frases em português do Brasil>"}
@@ -17,30 +21,34 @@ Examples:
 {"action":"BUY","confidence":0.62,"reasoning":"Momentum de alta presente no M15 com suporte na EMA20. ADX fraco mas direção predominante sugere compra cautelosa."}`;
 
 async function callClaude(userMessage: string): Promise<string> {
-  const response = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 512,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: userMessage }],
-  });
+  if (claudeHalted) {
+    throw new Error('[Claude] Halted — chave de API inválida (401). Corrija ANTHROPIC_API_KEY no .env e reinicie o bot.');
+  }
 
-  const block = response.content[0];
-  if (block.type !== 'text') throw new Error('Unexpected response type from Claude');
-  return block.text;
+  try {
+    const response = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 512,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: userMessage }],
+    });
+
+    const block = response.content[0];
+    if (block.type !== 'text') throw new Error('Unexpected response type from Claude');
+    return block.text;
+  } catch (err) {
+    const status = (err as { status?: number }).status;
+    if (status === 401) {
+      claudeHalted = true;
+      const msg = '🔴 *Claude PARADO* — API key inválida (401).\nCorrija `ANTHROPIC_API_KEY` no `.env` e reinicie o bot.';
+      console.error('[Claude] AuthenticationError 401 — parando chamadas. ' + msg);
+      void sendTelegram(msg);
+    }
+    throw err;
+  }
 }
 
 export async function askClaude(context: TradingContext): Promise<string> {
   const userMessage = `Analyze this multi-timeframe market data and provide a trading decision:\n\n${JSON.stringify(context)}`;
-
-  // Retry once on invalid JSON
-  try {
-    return await callClaude(userMessage);
-  } catch (err) {
-    const msg = (err as Error).message;
-    if (msg.includes('invalid JSON') || msg.includes('failed validation')) {
-      console.warn('[Claude] First attempt invalid, retrying...');
-      return await callClaude(userMessage);
-    }
-    throw err;
-  }
+  return callClaude(userMessage);
 }

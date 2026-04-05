@@ -1,8 +1,9 @@
 import type { ClaudeDecision } from '../ai/parser';
-import { getDailyPnl } from '../database/db';
+import { getDailyPnl, getOpenPaperTrades } from '../database/db';
 import { getBalance } from '../broker/bybit';
 
-const MIN_CONFIDENCE = 0.60; // [MODO TESTE] Reduzido de 0.70 para gerar entradas
+const MIN_CONFIDENCE = parseFloat(process.env.MIN_CONFIDENCE ?? '0.60');
+const MAX_OPEN_POSITIONS = parseInt(process.env.MAX_OPEN_POSITIONS ?? '3', 10);
 
 export interface RiskCheckResult {
   allowed: boolean;
@@ -17,7 +18,15 @@ export async function checkRisk(decision: ClaudeDecision): Promise<RiskCheckResu
   if (decision.confidence < MIN_CONFIDENCE) {
     return {
       allowed: false,
-      reason: `Confidence ${(decision.confidence * 100).toFixed(0)}% below minimum ${MIN_CONFIDENCE * 100}%`,
+      reason: `Confidence ${(decision.confidence * 100).toFixed(0)}% below minimum ${(MIN_CONFIDENCE * 100).toFixed(0)}%`,
+    };
+  }
+
+  const openTrades = getOpenPaperTrades();
+  if (openTrades.length >= MAX_OPEN_POSITIONS) {
+    return {
+      allowed: false,
+      reason: `Max open positions reached (${openTrades.length}/${MAX_OPEN_POSITIONS})`,
     };
   }
 

@@ -62,10 +62,11 @@ function waitForPython(retries, cb) {
 waitForPython(20, () => {
   console.log('[Launcher] Python indicators server is ready');
 
-  const bot = spawn('npx', ['ts-node', 'src/core/loop.ts'], {
+  const isWin = process.platform === 'win32';
+  const bot = spawn(isWin ? 'npx.cmd' : 'npx', ['ts-node', 'src/core/loop.ts'], {
     cwd: ROOT,
     stdio: 'inherit',
-    shell: true,
+    shell: false,
   });
   fs.writeFileSync(BOT_PID_FILE, String(bot.pid));
   console.log(`[Launcher] Bot started (PID ${bot.pid})`);
