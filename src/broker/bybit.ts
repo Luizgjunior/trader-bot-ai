@@ -39,9 +39,9 @@ export interface Position {
   unrealizedPnl: number;
 }
 
-export async function getCurrentPosition(): Promise<Position | null> {
+export async function getCurrentPosition(pair: string): Promise<Position | null> {
   if (process.env.PAPER_TRADING === 'true') {
-    const open = getOpenPaperTrades();
+    const open = getOpenPaperTrades(pair);
     if (open.length === 0) return null;
     const trade = open[0];
     return {
@@ -53,7 +53,6 @@ export async function getCurrentPosition(): Promise<Position | null> {
   }
 
   const ex = getExchange();
-  const pair = process.env.TRADING_PAIR ?? 'BTCUSDT';
   const symbol = `${pair.slice(0, -4)}/${pair.slice(-4)}:USDT`;
 
   const positions = await ex.fetchPositions([symbol]);
@@ -70,13 +69,13 @@ export async function getCurrentPosition(): Promise<Position | null> {
 }
 
 export async function placeMarketOrder(
+  pair: string,
   side: 'buy' | 'sell',
   qty: number,
   stopLoss: number,
   takeProfit: number
 ): Promise<string> {
   const ex = getExchange();
-  const pair = process.env.TRADING_PAIR ?? 'BTCUSDT';
   const symbol = `${pair.slice(0, -4)}/${pair.slice(-4)}:USDT`;
 
   const order = await ex.createOrder(symbol, 'market', side, qty, undefined, {
@@ -87,9 +86,8 @@ export async function placeMarketOrder(
   return order.id;
 }
 
-export async function closePosition(): Promise<void> {
+export async function closePosition(pair: string): Promise<void> {
   const ex = getExchange();
-  const pair = process.env.TRADING_PAIR ?? 'BTCUSDT';
   const symbol = `${pair.slice(0, -4)}/${pair.slice(-4)}:USDT`;
 
   const positions = await ex.fetchPositions([symbol]);

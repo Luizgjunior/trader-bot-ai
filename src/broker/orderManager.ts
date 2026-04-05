@@ -20,7 +20,7 @@ export async function executeDecision(decision: ClaudeDecision, context: Trading
     return { executed: false, reason: 'HOLD signal' };
   }
 
-  const position = await getCurrentPosition();
+  const position = await getCurrentPosition(context.pair);
 
   if (position) {
     const sideMatch =
@@ -72,6 +72,7 @@ export async function executeDecision(decision: ClaudeDecision, context: Trading
   }
 
   const orderId = await placeMarketOrder(
+    context.pair,
     decision.action.toLowerCase() as 'buy' | 'sell',
     size,
     stopLoss,

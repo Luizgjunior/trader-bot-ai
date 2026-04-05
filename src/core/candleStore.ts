@@ -58,26 +58,6 @@ function persistCandle(candle: Candle, pair: string): void {
   `).run(pair, candle.timestamp, candle.open, candle.high, candle.low, candle.close, candle.volume);
 }
 
-export function loadHistoricalCandles(): void {
-  for (const pair of PAIRS) {
-    const rows = getDb().prepare(`
-      SELECT * FROM candles WHERE pair = ? ORDER BY timestamp DESC LIMIT ?
-    `).all(pair, MAX_CANDLES) as unknown as (Candle & { pair: string })[];
-
-    const store = getStore(pair, '15');
-    store.push(...rows.map(r => ({
-      timestamp: r.timestamp,
-      open:      r.open,
-      high:      r.high,
-      low:       r.low,
-      close:     r.close,
-      volume:    r.volume,
-    })).reverse());
-
-    console.log(`[CandleStore] Loaded ${store.length} M15 candles for ${pair} from DB`);
-  }
-}
-
 export async function fetchAndLoadHistoricalCandles(
   pair: string,
   testnet: boolean

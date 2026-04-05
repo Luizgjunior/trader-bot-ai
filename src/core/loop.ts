@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { connectWebSocket } from './websocket';
-import { PAIRS, fetchAndLoadHistoricalCandles, isStoreReady } from './candleStore';
+import { PAIRS, fetchAndLoadHistoricalCandles, isStoreReady, getLastCandle } from './candleStore';
 import { initDb, getSetting, setSetting, getOpenPaperTrades, closePaperTrade, getDailyStats } from '../database/db';
 import { buildContext, type TradingContext } from '../ai/contextBuilder';
 import { askClaude } from '../ai/claude';
@@ -94,6 +94,9 @@ async function onCandleClose(pair: string): Promise<void> {
       cycleResults.delete(cycleKey);
       await sendTelegram(formatResumoMultiPar(bucket));
     }
+    // Limpa ciclos antigos onde algum par não contribuiu (evita memory leak)
+    const staleKeys = [...cycleResults.keys()].filter(k => globalCandleCount - k > 2);
+    for (const k of staleKeys) cycleResults.delete(k);
   }
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -111,6 +114,21 @@ async function onCandleClose(pair: string): Promise<void> {
 
   state.candleCount++;
 
+  // ── Monitoramento de posições sempre ativo (independente de circuit breaker) ──
+  const lastClose = getLastCandle(pair, '15')?.close ?? 0;
+  if (lastClose > 0) {
+    await checkPaperClosures(pair, lastClose);
+    for (const trade of getOpenPaperTrades(pair)) {
+      const update = checkTrailingStop(trade, lastClose);
+      if (update) {
+        console.log(`[Trailing] ${pair} Trade #${trade.id} — ${update}`);
+        const acaoPt = trade.action === 'BUY' ? 'COMPRA' : 'VENDA';
+        await sendTelegram(`🔄 *Trailing Stop* ${pair} #${trade.id} (${acaoPt})\n${update}`);
+      }
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   if (state.candleCount < state.skipUntilCandle) {
     const restantes = state.skipUntilCandle - state.candleCount;
     console.log(`[Loop] ${pair} Circuito aberto — pulando Claude (${restantes} candle(s) restante(s))`);
@@ -124,17 +142,6 @@ async function onCandleClose(pair: string): Promise<void> {
 
     await maybeSendDailySummary(context);
     await maybeAlertInactivity();
-
-    // ── Monitoramento de posições abertas (roda todo ciclo) ──────────────
-    await checkPaperClosures(pair, context.currentPrice);
-    for (const trade of getOpenPaperTrades(pair)) {
-      const update = checkTrailingStop(trade, context.currentPrice);
-      if (update) {
-        console.log(`[Trailing] ${pair} Trade #${trade.id} — ${update}`);
-        const acaoPt = trade.action === 'BUY' ? 'COMPRA' : 'VENDA';
-        await sendTelegram(`🔄 *Trailing Stop* ${pair} #${trade.id} (${acaoPt})\n${update}`);
-      }
-    }
 
     // ── Filtro: hora bloqueada (baixa liquidez) ──────────────────────────
     if (BLOCKED_HOURS.has(context.hour)) {
@@ -252,6 +259,12 @@ async function maybeSendDailySummary(context: TradingContext): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const nodeMajor = parseInt(process.versions.node.split('.')[0], 10);
+  if (nodeMajor < 22) {
+    console.error(`\n[ERRO] Node.js 22+ é obrigatório (node:sqlite). Versão atual: ${process.versions.node}\nInstale em: https://nodejs.org\n`);
+    process.exit(1);
+  }
+
   console.log('=== tradebot-ai iniciando ===');
   console.log(`Pares: ${PAIRS.join(', ')} | Timeframes: M15, H1, H4 | Testnet: ${TESTNET}`);
 

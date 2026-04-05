@@ -101,7 +101,8 @@ export function formatEntrada(
   const acaoEmoji = decision.action === 'BUY' ? '📈' : '📉';
   const acaoPt = decision.action === 'BUY' ? 'COMPRA' : 'VENDA';
   const mtfLine = `M15: ${trendEmoji(context.m15.ema_trend)} | H1: ${trendEmoji(context.h1.ema_trend)} | H4: ${trendEmoji(context.h4.ema_trend)}`;
-  const sizeStr = result.size !== undefined ? `\nTamanho: ${result.size} BTC` : '';
+  const asset = pair.replace('USDT', '');
+  const sizeStr = result.size !== undefined ? `\nTamanho: ${result.size} ${asset}` : '';
   return (
     `${acaoEmoji} *${acaoPt} ${pair}* ${modo}\n` +
     `${mtfLine}\n` +

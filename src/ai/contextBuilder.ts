@@ -108,7 +108,7 @@ export async function buildContext(pair: string): Promise<TradingContext> {
     fetchIndicators(candles60),
     fetchIndicators(candles240),
     candlesD1.length >= 50 ? fetchIndicators(candlesD1).catch(() => null) : Promise.resolve(null),
-    getCurrentPosition(),
+    getCurrentPosition(pair),
     getBalance(),
   ]);
 
