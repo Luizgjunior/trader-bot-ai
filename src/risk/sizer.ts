@@ -2,7 +2,7 @@ import type { ClaudeDecision } from '../ai/parser';
 import { getDailyPnl } from '../database/db';
 import { getBalance } from '../broker/bybit';
 
-const MIN_CONFIDENCE = 0.70;
+const MIN_CONFIDENCE = 0.60; // [MODO TESTE] Reduzido de 0.70 para gerar entradas
 
 export interface RiskCheckResult {
   allowed: boolean;

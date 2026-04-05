@@ -149,33 +149,20 @@ async function onCandleClose(pair: string): Promise<void> {
       return;
     }
 
-    // ── Pré-filtro: timeframes desalinhados ──────────────────────────────
-    if (context.timeframe_alignment === 'mixed') {
-      logCycle(context, 'cancelado (mixed)');
-      state.consecutiveHolds++;
-      _checkCircuit(pair, state);
-      await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: '', blocked: 'mixed MTF' });
-      return;
-    }
-
-    // ── Filtro ADX: evita mercados realmente laterais (ADX < 15) ─────────
+    // ── [MODO TESTE] Filtros relaxados para gerar entradas e coletar dados ──
+    // MTF: bloqueia só se AMBOS H1 e H4 apontam direções opostas (não só mixed)
+    // ADX: apenas log, não bloqueia
+    // Volume: apenas log, não bloqueia
     if (context.h4.adx_strength === 'no_trend') {
-      logCycle(context, `cancelado (ADX muito fraco ${context.h4.adx.toFixed(1)})`);
-      state.consecutiveHolds++;
-      _checkCircuit(pair, state);
-      await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: '', blocked: `ADX muito fraco (${context.h4.adx.toFixed(1)})` });
-      return;
-    }
-
-    // ── Filtro Volume: evita candles sem liquidez ─────────────────────────
-    if (context.m15.volume_vs_avg === 'low') {
-      logCycle(context, 'aguardando liquidez');
-      await addResult({ pair, action: 'HOLD', confidence: 0, reasoning: '', blocked: 'volume baixo' });
-      return;
+      logCycle(context, `Claude chamado (ADX fraco ${context.h4.adx.toFixed(1)} — modo teste)`);
+    } else if (context.timeframe_alignment === 'mixed') {
+      logCycle(context, 'Claude chamado (MTF mixed — modo teste)');
+    } else if (context.m15.volume_vs_avg === 'low') {
+      logCycle(context, 'Claude chamado (vol baixo — modo teste)');
+    } else {
+      logCycle(context, 'Claude chamado');
     }
     // ────────────────────────────────────────────────────────────────────
-
-    logCycle(context, 'Claude chamado');
     const rawResponse = await askClaude(context);
     const decision = parseClaudeResponse(rawResponse);
     console.log(`[Loop] ${pair} Decisão Claude: ${decision.action} (confiança: ${decision.confidence})`);
@@ -187,16 +174,12 @@ async function onCandleClose(pair: string): Promise<void> {
       state.consecutiveHolds = 0;
     }
 
-    // ── Filtro D1: bloqueia trades contra a tendência macro diária ────────
+    // ── [MODO TESTE] Filtro D1 desativado — log apenas ───────────────────
     if (decision.action !== 'HOLD' && context.d1 && context.d1.ema_trend !== 'neutral') {
       const d1Trend = context.d1.ema_trend;
       if ((decision.action === 'BUY' && d1Trend === 'bearish') ||
           (decision.action === 'SELL' && d1Trend === 'bullish')) {
-        logCycle(context, `bloqueado (contra D1: ${d1Trend})`);
-        state.consecutiveHolds++;
-        _checkCircuit(pair, state);
-        await addResult({ pair, action: 'HOLD', confidence: decision.confidence, reasoning: decision.reasoning, blocked: `contra D1 (${d1Trend})` });
-        return;
+        console.log(`[Loop] ${context.pair} [MODO TESTE] Entrada contra D1 (${d1Trend}) — permitida para coleta de dados`);
       }
     }
     // ─────────────────────────────────────────────────────────────────────
